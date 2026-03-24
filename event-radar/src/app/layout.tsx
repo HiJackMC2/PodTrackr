@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "EventRadar — London Events for Christian",
-  description: "Curated London events from UKCLA, Fabian Society, Pints of Knowledge & MCA. Keyword-matched to your interests, no AI tokens burned.",
+  title: "Events for Christian",
+  description: "Curated London events from UKCLA, Fabian Society, Pints of Knowledge & MCA. Keyword-matched to your interests.",
 };
 
 export default function RootLayout({

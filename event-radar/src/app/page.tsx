@@ -120,7 +120,7 @@ export default function Dashboard() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-zinc-900 dark:text-white">
-                  EventRadar
+                  Events for Christian
                 </h1>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
                   London events, curated for you
@@ -240,7 +240,7 @@ export default function Dashboard() {
       <footer className="border-t border-zinc-200 dark:border-zinc-800 py-6 mt-12">
         <div className="max-w-5xl mx-auto px-4 text-center text-xs text-zinc-400 dark:text-zinc-600">
           <p>
-            EventRadar scrapes events from UKCLA, Fabian Society, Pints of
+            Events for Christian scrapes events from UKCLA, Fabian Society, Pints of
             Knowledge & MCA.
           </p>
           <p className="mt-1">
