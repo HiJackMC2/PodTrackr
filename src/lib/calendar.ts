@@ -31,7 +31,7 @@ export function generateICSEvent(event: Event): string {
     event.description ? `DESCRIPTION:${escapeICS(event.description)}` : '',
     event.location ? `LOCATION:${escapeICS(event.location)}` : '',
     event.url ? `URL:${event.url}` : '',
-    `UID:${event.id}@events-for-christian`,
+    `UID:${event.id}@event-radar`,
     'END:VEVENT',
     'END:VCALENDAR',
   ].filter(Boolean);

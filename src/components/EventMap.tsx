@@ -24,6 +24,77 @@ function markerColor(dateStr: string): string {
   return '#4f46e5';
 }
 
+// Guess coordinates for known London venues
+function guessCoordinates(event: Event): [number, number] | null {
+  if (event.latitude && event.longitude) {
+    return [event.latitude, event.longitude];
+  }
+
+  const loc = (event.location || '').toLowerCase();
+  const title = event.title.toLowerCase();
+  const source = (event.source as { name?: string } | undefined)?.name?.toLowerCase() || '';
+  const combined = `${loc} ${title} ${source}`;
+
+  const venues: Record<string, [number, number]> = {
+    'lse': [51.5144, -0.1165],
+    'london school of economics': [51.5144, -0.1165],
+    'ucl': [51.5246, -0.1340],
+    'university college london': [51.5246, -0.1340],
+    'kings college': [51.5115, -0.1160],
+    "king's college": [51.5115, -0.1160],
+    'kcl': [51.5115, -0.1160],
+    'chatham house': [51.5074, -0.1416],
+    'rsa': [51.5093, -0.1225],
+    'royal society of arts': [51.5093, -0.1225],
+    'british academy': [51.5082, -0.1378],
+    'conway hall': [51.5226, -0.1200],
+    'gresham college': [51.5155, -0.0924],
+    'royal institution': [51.5095, -0.1428],
+    'southbank centre': [51.5073, -0.1163],
+    'institute for government': [51.5020, -0.1299],
+    'ippr': [51.5208, -0.1115],
+    'fabian society': [51.4913, -0.1281],
+    'intelligence squared': [51.5088, -0.1342],
+    'how to academy': [51.5088, -0.1342],
+    'rusi': [51.5073, -0.1280],
+    'prospect magazine': [51.5255, -0.0895],
+    'london review bookshop': [51.5209, -0.1308],
+    'ifs': [51.5189, -0.1077],
+    'institute for fiscal studies': [51.5189, -0.1077],
+    'demos': [51.5120, -0.0909],
+    'resolution foundation': [51.5019, -0.1348],
+    'wellcome collection': [51.5259, -0.1338],
+    'british library': [51.5299, -0.1273],
+    'barbican': [51.5200, -0.0938],
+    'science museum': [51.4978, -0.1745],
+    'royal society': [51.5061, -0.1318],
+    'imperial college': [51.4988, -0.1749],
+    'soas': [51.5222, -0.1293],
+    'frontline club': [51.5173, -0.1757],
+    'policy exchange': [51.5074, -0.1318],
+    'westminster': [51.4995, -0.1248],
+    'parliament': [51.4995, -0.1248],
+    '5x15': [51.5176, -0.1531],
+    'tabernacle': [51.5176, -0.1531],
+  };
+
+  for (const [keyword, coords] of Object.entries(venues)) {
+    if (combined.includes(keyword)) return coords;
+  }
+
+  // For online events, skip mapping
+  if (event.is_online) return null;
+
+  // For London events without a known venue, place at a slightly randomized central location
+  // so the map still shows something useful
+  if (event.city === 'London' || !event.city) {
+    const jitter = () => (Math.random() - 0.5) * 0.02;
+    return [51.5074 + jitter(), -0.1278 + jitter()];
+  }
+
+  return null;
+}
+
 export default function EventMap({ events, onEventClick }: EventMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -49,9 +120,11 @@ export default function EventMap({ events, onEventClick }: EventMapProps) {
       maxZoom: 18,
     }).addTo(map);
 
-    const eventsWithCoords = events.filter(e => e.latitude && e.longitude);
+    const mappableEvents = events
+      .map(e => ({ event: e, coords: guessCoordinates(e) }))
+      .filter((item): item is { event: Event; coords: [number, number] } => item.coords !== null);
 
-    eventsWithCoords.forEach(event => {
+    mappableEvents.forEach(({ event, coords }) => {
       const color = markerColor(event.date);
       const diff = daysUntil(event.date);
       const urgency = diff <= 1 ? 'TODAY' : diff <= 3 ? `${diff}d` : diff <= 7 ? `${diff}d` : `${Math.floor(diff / 7)}w`;
@@ -77,7 +150,7 @@ export default function EventMap({ events, onEventClick }: EventMapProps) {
         iconAnchor: [16, 16],
       });
 
-      const marker = L.marker([event.latitude!, event.longitude!], { icon }).addTo(map);
+      const marker = L.marker(coords, { icon }).addTo(map);
 
       const sourceName = (event.source as { name: string } | undefined)?.name || '';
       const dateFormatted = new Date(event.date).toLocaleDateString('en-GB', {
@@ -100,9 +173,9 @@ export default function EventMap({ events, onEventClick }: EventMapProps) {
     });
 
     // Fit bounds if we have events
-    if (eventsWithCoords.length > 0) {
+    if (mappableEvents.length > 0) {
       const group = L.featureGroup(
-        eventsWithCoords.map(e => L.marker([e.latitude!, e.longitude!]))
+        mappableEvents.map(({ coords }) => L.marker(coords))
       );
       map.fitBounds(group.getBounds().pad(0.1));
     }
@@ -116,6 +189,14 @@ export default function EventMap({ events, onEventClick }: EventMapProps) {
       }
     };
   }, [events, onEventClick]);
+
+  if (events.length === 0) {
+    return (
+      <div className="w-full h-[200px] flex items-center justify-center rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
+        <p className="text-sm text-zinc-400">No events to show on map</p>
+      </div>
+    );
+  }
 
   return (
     <div

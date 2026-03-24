@@ -166,6 +166,23 @@ ALTER TABLE events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE event_interests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE event_actions ENABLE ROW LEVEL SECURITY;
 
+-- Email log: track sent emails for idempotency
+CREATE TABLE IF NOT EXISTS email_log (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  email_type TEXT NOT NULL,
+  recipient TEXT NOT NULL,
+  subject TEXT,
+  events_included INTEGER DEFAULT 0,
+  metadata JSONB DEFAULT '{}',
+  sent_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_log_type ON email_log(email_type);
+CREATE INDEX IF NOT EXISTS idx_email_log_sent ON email_log(sent_at);
+
+ALTER TABLE email_log ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all on email_log" ON email_log FOR ALL USING (true) WITH CHECK (true);
+
 -- Saved addresses for travel time feature
 CREATE TABLE IF NOT EXISTS saved_addresses (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
