@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     .from('events')
     .select(`
       *,
-      source:sources(id, name, url, category),
+      source:sources(id, name, url),
       interests:event_interests(interest:interests(*)),
       actions:event_actions(action, created_at)
     `)
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
       .from('events')
       .select(`
         *,
-        source:sources(id, name, url, category),
+        source:sources(id, name, url),
         interests:event_interests!inner(interest:interests!inner(*)),
         actions:event_actions(action, created_at)
       `)

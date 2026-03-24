@@ -25,7 +25,7 @@ export type Source = {
   url: string;
   scrape_type: 'rss' | 'html' | 'api' | 'eventbrite' | 'ics';
   scrape_config: Record<string, unknown>;
-  category: string;
+  category?: string;
   enabled: boolean;
   last_scraped_at: string | null;
 };

@@ -18,23 +18,12 @@ type SourceInfo = {
   name: string;
   url: string;
   scrape_type: string;
-  category: string;
   enabled: boolean;
   last_scraped_at: string | null;
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
-  'think-tank': 'Think Tanks & Policy',
-  'legal-constitutional': 'Legal & Constitutional',
-  'lectures': 'Public Lectures & Intellectual Events',
-  'university': 'University Public Lectures',
-  'casual-intellectual': 'Casual & Pub-based Science',
-  'consulting': 'Consulting Industry',
-  'debate': 'Debating & Political Discussion',
-  'economics': 'Economics & Fiscal Policy',
-  'international-affairs': 'International Affairs & Security',
-  'aggregator': 'Aggregators & Directories',
-  'general': 'General',
+  'all': 'Event Sources',
 };
 
 const SCRAPE_TYPE_ICONS: Record<string, React.ReactNode> = {
@@ -50,20 +39,14 @@ export default function AboutSection() {
     async function fetchSources() {
       const { data } = await supabase
         .from('sources')
-        .select('id, name, url, scrape_type, category, enabled, last_scraped_at')
-        .order('category')
+        .select('id, name, url, scrape_type, enabled, last_scraped_at')
         .order('name');
       if (data) setSources(data as SourceInfo[]);
     }
     fetchSources();
   }, []);
 
-  const grouped = sources.reduce((acc, source) => {
-    const cat = source.category || 'general';
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(source);
-    return acc;
-  }, {} as Record<string, SourceInfo[]>);
+  const grouped = { 'all': sources };
 
   const enabledCount = sources.filter(s => s.enabled).length;
 
