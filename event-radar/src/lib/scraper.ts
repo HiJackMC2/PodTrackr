@@ -2,31 +2,76 @@ import { supabase } from './supabase';
 import type { Source } from './supabase';
 import * as cheerio from 'cheerio';
 
+// Well-known London venue coordinates for map visualization
+const VENUE_COORDS: Record<string, { lat: number; lng: number }> = {
+  'lse': { lat: 51.5144, lng: -0.1165 },
+  'ucl': { lat: 51.5246, lng: -0.1340 },
+  'kcl': { lat: 51.5115, lng: -0.1160 },
+  'kings college': { lat: 51.5115, lng: -0.1160 },
+  'chatham house': { lat: 51.5074, lng: -0.1416 },
+  'rsa': { lat: 51.5093, lng: -0.1222 },
+  'royal society of arts': { lat: 51.5093, lng: -0.1222 },
+  'british academy': { lat: 51.5062, lng: -0.1316 },
+  'conway hall': { lat: 51.5225, lng: -0.1201 },
+  'gresham college': { lat: 51.5180, lng: -0.1095 },
+  'royal institution': { lat: 51.5095, lng: -0.1419 },
+  'southbank centre': { lat: 51.5063, lng: -0.1167 },
+  'science museum': { lat: 51.4978, lng: -0.1745 },
+  'institute for government': { lat: 51.5015, lng: -0.1307 },
+  'ippr': { lat: 51.5255, lng: -0.0890 },
+  'fabian society': { lat: 51.5220, lng: -0.1050 },
+  'westminster': { lat: 51.4995, lng: -0.1248 },
+  'holborn': { lat: 51.5174, lng: -0.1201 },
+  'strand': { lat: 51.5115, lng: -0.1177 },
+  'bloomsbury': { lat: 51.5225, lng: -0.1278 },
+  'london bridge': { lat: 51.5079, lng: -0.0877 },
+  'shoreditch': { lat: 51.5263, lng: -0.0813 },
+  'islington': { lat: 51.5362, lng: -0.1033 },
+  'mayfair': { lat: 51.5094, lng: -0.1476 },
+  'london': { lat: 51.5074, lng: -0.1278 },
+};
+
+function guessCoordinates(location: string | null, sourceName: string): { lat: number; lng: number } | null {
+  const text = `${location || ''} ${sourceName}`.toLowerCase();
+  for (const [key, coords] of Object.entries(VENUE_COORDS)) {
+    if (text.includes(key)) return coords;
+  }
+  // Default London center for London events
+  if (text.includes('london') || location) {
+    return { lat: 51.5074 + (Math.random() - 0.5) * 0.02, lng: -0.1278 + (Math.random() - 0.5) * 0.02 };
+  }
+  return null;
+}
+
 // Keyword → interest slug mapping for auto-tagging (no AI needed)
 const INTEREST_KEYWORDS: Record<string, string[]> = {
   'constitutional-law': [
     'constitutional', 'judicial review', 'rule of law', 'parliament', 'sovereignty',
     'human rights', 'public law', 'legislation', 'supreme court', 'devolution',
     'electoral', 'democracy', 'administrative law', 'legal', 'statute',
+    'bingham', 'justice', 'court', 'tribunal', 'charter',
   ],
   'policy-politics': [
     'policy', 'politics', 'labour', 'conservative', 'government', 'reform',
     'social democracy', 'fabian', 'public sector', 'regulation', 'cabinet',
     'minister', 'election', 'manifesto', 'progressive', 'inequality',
+    'think tank', 'public services', 'welfare', 'housing',
   ],
   'science-research': [
     'science', 'research', 'academic', 'study', 'data', 'evidence',
     'experiment', 'discovery', 'biology', 'physics', 'climate', 'space',
-    'neuroscience', 'psychology', 'university',
+    'neuroscience', 'psychology', 'university', 'chemistry', 'astronomy',
+    'evolution', 'mathematics', 'engineering',
   ],
   'management-consulting': [
     'consulting', 'management', 'strategy', 'business', 'leadership',
     'transformation', 'advisory', 'mca', 'chartered', 'client', 'delivery',
-    'project', 'value-based', 'sme', 'firm',
+    'project', 'value-based', 'sme', 'firm', 'productivity',
   ],
   'public-speaking': [
     'talk', 'lecture', 'speaker', 'keynote', 'panel', 'presentation',
     'discussion', 'debate', 'seminar', 'conference', 'workshop', 'masterclass',
+    'discourse', 'symposium',
   ],
   'social-networking': [
     'networking', 'reception', 'dinner', 'drinks', 'social', 'meetup',
@@ -35,11 +80,21 @@ const INTEREST_KEYWORDS: Record<string, string[]> = {
   'technology-ai': [
     'technology', 'ai', 'artificial intelligence', 'digital', 'machine learning',
     'automation', 'software', 'data science', 'tech', 'cyber', 'innovation',
-    'digitising', 'smart', 'algorithm',
+    'digitising', 'smart', 'algorithm', 'blockchain', 'quantum',
   ],
   'health-services': [
     'health', 'nhs', 'social care', 'wellbeing', 'mental health', 'hospital',
     'public health', 'clinical', 'medical', 'patient', 'healthcare',
+  ],
+  'economics-fiscal': [
+    'economics', 'fiscal', 'tax', 'budget', 'growth', 'inflation',
+    'monetary', 'trade', 'gdp', 'wages', 'living standards', 'poverty',
+    'income', 'wealth', 'macroeconom', 'microeconom', 'ifs',
+  ],
+  'international-affairs': [
+    'international', 'foreign policy', 'geopolitics', 'security', 'defence',
+    'nato', 'un', 'eu', 'brexit', 'diplomacy', 'global', 'conflict',
+    'migration', 'refugee', 'sanctions', 'sovereignty',
   ],
 };
 
@@ -74,7 +129,7 @@ export function matchInterests(title: string, description: string | null): strin
   return matched;
 }
 
-// --- RSS Scraping (UKCLA WordPress) ---
+// --- RSS Scraping (UKCLA WordPress, Chatham House, Smart Thinking) ---
 
 async function scrapeRSS(source: Source): Promise<ParsedEvent[]> {
   const config = source.scrape_config as { feed_url: string; event_keywords?: string[] };
@@ -92,7 +147,7 @@ async function scrapeRSS(source: Source): Promise<ParsedEvent[]> {
 
     if (!title || !link) continue;
 
-    // Filter: only include items that look like events
+    // Filter: only include items that look like events (if keywords specified)
     if (config.event_keywords?.length) {
       const text = `${title} ${description || ''}`.toLowerCase();
       const isEvent = config.event_keywords.some(kw => text.includes(kw));
@@ -101,14 +156,13 @@ async function scrapeRSS(source: Source): Promise<ParsedEvent[]> {
 
     if (isJunkTitle(title)) continue;
 
-    // UKCLA publishes articles, not events with future dates.
-    // Use the pubDate and set events ~30 days ahead for upcoming related events.
     const pubDateParsed = pubDate ? new Date(pubDate) : new Date();
-    // Make it a future "event" by adding 14 days from publication
+    // For sources without real event dates, estimate from publication
     const eventDate = new Date(pubDateParsed);
     eventDate.setDate(eventDate.getDate() + 14);
-    // Only include if event would be in the future
     if (eventDate < new Date()) continue;
+
+    const coords = guessCoordinates(null, source.name);
 
     events.push({
       title: decodeHTML(title),
@@ -119,13 +173,15 @@ async function scrapeRSS(source: Source): Promise<ParsedEvent[]> {
       is_free: true,
       is_online: false,
       external_id: link.trim(),
+      latitude: coords?.lat || null,
+      longitude: coords?.lng || null,
     });
   }
 
   return events;
 }
 
-// --- HTML Scraping (MCA + Fabians) using Cheerio ---
+// --- Generic HTML Scraping (works for all HTML sources) ---
 
 async function scrapeHTML(source: Source): Promise<ParsedEvent[]> {
   const config = source.scrape_config as {
@@ -133,44 +189,132 @@ async function scrapeHTML(source: Source): Promise<ParsedEvent[]> {
     selectors: Record<string, string>;
   };
 
-  const response = await fetch(config.events_url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; EventsForChristian/1.0)' },
-  });
+  let response;
+  try {
+    response = await fetch(config.events_url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; EventsForChristian/1.0)' },
+    });
+  } catch {
+    return [];
+  }
 
   if (!response.ok) return [];
 
   const html = await response.text();
   const $ = cheerio.load(html);
 
+  // Source-specific scrapers for known patterns
   if (source.name.includes('MCA') || source.name.includes('Management')) {
     return scrapeMCA($, source.url);
   }
-
   if (source.name.includes('Fabian')) {
     return scrapeFabians($, source.url);
   }
 
-  return [];
+  // Generic scraper for all other HTML sources
+  return scrapeGenericHTML($, source.url, source.name, config.selectors);
+}
+
+function scrapeGenericHTML(
+  $: cheerio.CheerioAPI,
+  baseUrl: string,
+  sourceName: string,
+  selectors: Record<string, string>
+): ParsedEvent[] {
+  const events: ParsedEvent[] = [];
+  const seen = new Set<string>();
+
+  // Try to find event links using configured selectors
+  const linkSelector = selectors?.link || 'a[href*="event"], a[href*="lecture"], a[href*="seminar"], a[href*="talk"]';
+
+  $(linkSelector).each((_, el) => {
+    const $el = $(el);
+    const href = $el.attr('href') || '';
+    if (!href || seen.has(href)) return;
+    if (href === '#' || href.startsWith('javascript:')) return;
+
+    let title = $el.find('h1, h2, h3, h4').first().text().trim();
+    if (!title) title = $el.text().trim();
+    if (!title || isJunkTitle(title)) return;
+    // Clean up multi-line titles
+    title = title.replace(/\s+/g, ' ').trim();
+    if (title.length > 200) title = title.slice(0, 200);
+
+    seen.add(href);
+
+    const parent = $el.closest('div, article, li, section');
+    let dateStr: string | null = null;
+
+    // Try time element first
+    const timeEl = parent.find('time');
+    if (timeEl.length) {
+      dateStr = timeEl.attr('datetime') || timeEl.text().trim();
+    }
+    // Then look for date patterns in text
+    if (!dateStr) {
+      const parentText = parent.text();
+      const dateMatch = parentText.match(/(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i);
+      if (dateMatch) dateStr = dateMatch[1];
+    }
+    // Try ISO-ish dates
+    if (!dateStr) {
+      const parentText = parent.text();
+      const isoMatch = parentText.match(/(\d{4}-\d{2}-\d{2})/);
+      if (isoMatch) dateStr = isoMatch[1];
+    }
+
+    let location = 'London';
+    const locationEl = parent.find('.location, .venue, [class*="location"], [class*="venue"]');
+    if (locationEl.length) {
+      location = locationEl.text().trim() || 'London';
+    }
+
+    // Try to extract description
+    let description: string | null = null;
+    const descEl = parent.find('p, .description, .excerpt, .summary, [class*="description"], [class*="excerpt"]');
+    if (descEl.length) {
+      description = descEl.first().text().trim().slice(0, 500) || null;
+    }
+
+    const fullUrl = href.startsWith('http') ? href : `${baseUrl}${href.startsWith('/') ? '' : '/'}${href}`;
+    const textLower = parent.text().toLowerCase();
+    const isFree = textLower.includes('free') || textLower.includes('no charge');
+    const isOnline = title.toLowerCase().includes('online') || textLower.includes('online event') || textLower.includes('virtual');
+
+    const coords = guessCoordinates(location, sourceName);
+
+    events.push({
+      title: decodeHTML(title),
+      description,
+      date: dateStr ? parseFlexibleDate(dateStr) : null,
+      location: isOnline ? 'Online' : location,
+      url: fullUrl,
+      is_free: isFree,
+      is_online: isOnline,
+      external_id: href,
+      latitude: coords?.lat || null,
+      longitude: coords?.lng || null,
+    });
+  });
+
+  return events.filter(e => e.date !== null) as ParsedEvent[];
 }
 
 function scrapeMCA($: cheerio.CheerioAPI, baseUrl: string): ParsedEvent[] {
   const events: ParsedEvent[] = [];
   const seen = new Set<string>();
 
-  // MCA event pages typically have links to /event/ paths
   $('a[href*="/event/"]').each((_, el) => {
     const $el = $(el);
     const href = $el.attr('href') || '';
     if (!href.includes('/event/') || seen.has(href)) return;
 
-    // Find the title - look for heading inside or nearby
     let title = $el.find('h2, h3, h4').first().text().trim();
     if (!title) title = $el.text().trim();
     if (!title || isJunkTitle(title)) return;
 
     seen.add(href);
 
-    // Try to find date near this element
     const parent = $el.closest('div, article, li, section');
     let dateStr: string | null = null;
     const timeEl = parent.find('time');
@@ -178,13 +322,11 @@ function scrapeMCA($: cheerio.CheerioAPI, baseUrl: string): ParsedEvent[] {
       dateStr = timeEl.attr('datetime') || timeEl.text().trim();
     }
     if (!dateStr) {
-      // Look for date patterns in surrounding text
       const parentText = parent.text();
       const dateMatch = parentText.match(/(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i);
       if (dateMatch) dateStr = dateMatch[1];
     }
 
-    // Try to find location
     let location = 'London';
     const locationEl = parent.find('.location, .venue, [class*="location"]');
     if (locationEl.length) {
@@ -194,6 +336,7 @@ function scrapeMCA($: cheerio.CheerioAPI, baseUrl: string): ParsedEvent[] {
     const fullUrl = href.startsWith('http') ? href : `${baseUrl}${href}`;
     const isFree = parent.text().toLowerCase().includes('free');
     const isOnline = title.toLowerCase().includes('online') || parent.text().toLowerCase().includes('online') || parent.text().toLowerCase().includes('video conference');
+    const coords = guessCoordinates(location, 'mca');
 
     events.push({
       title: decodeHTML(title),
@@ -204,6 +347,8 @@ function scrapeMCA($: cheerio.CheerioAPI, baseUrl: string): ParsedEvent[] {
       is_free: isFree,
       is_online: isOnline,
       external_id: href,
+      latitude: coords?.lat || null,
+      longitude: coords?.lng || null,
     });
   });
 
@@ -214,7 +359,6 @@ function scrapeFabians($: cheerio.CheerioAPI, baseUrl: string): ParsedEvent[] {
   const events: ParsedEvent[] = [];
   const seen = new Set<string>();
 
-  // Fabians event links
   $('a[href*="/event/"]').each((_, el) => {
     const $el = $(el);
     const href = $el.attr('href') || '';
@@ -223,8 +367,6 @@ function scrapeFabians($: cheerio.CheerioAPI, baseUrl: string): ParsedEvent[] {
     let title = $el.find('h2, h3, h4').first().text().trim();
     if (!title) title = $el.text().trim();
     if (!title || isJunkTitle(title)) return;
-
-    // Skip pagination and generic links
     if (title.match(/^(page|next|prev|\d+|«|»|›|‹)/i)) return;
 
     seen.add(href);
@@ -243,6 +385,7 @@ function scrapeFabians($: cheerio.CheerioAPI, baseUrl: string): ParsedEvent[] {
     }
 
     const fullUrl = href.startsWith('http') ? href : `${baseUrl}${href}`;
+    const coords = guessCoordinates('london', 'fabian');
 
     events.push({
       title: decodeHTML(title),
@@ -253,6 +396,8 @@ function scrapeFabians($: cheerio.CheerioAPI, baseUrl: string): ParsedEvent[] {
       is_free: false,
       is_online: false,
       external_id: href,
+      latitude: coords?.lat || null,
+      longitude: coords?.lng || null,
     });
   });
 
@@ -265,7 +410,6 @@ async function scrapeAPI(source: Source): Promise<ParsedEvent[]> {
   const config = source.scrape_config as { ticket_url: string; fallback_url: string };
 
   try {
-    // TicketTailor redirects to their platform
     const response = await fetch(config.ticket_url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; EventsForChristian/1.0)' },
       redirect: 'follow',
@@ -276,7 +420,6 @@ async function scrapeAPI(source: Source): Promise<ParsedEvent[]> {
       const events: ParsedEvent[] = [];
       const seen = new Set<string>();
 
-      // TicketTailor event cards
       $('a[href*="event"]').each((_, el) => {
         const $el = $(el);
         const href = $el.attr('href') || '';
@@ -300,6 +443,8 @@ async function scrapeAPI(source: Source): Promise<ParsedEvent[]> {
           is_free: false,
           is_online: false,
           external_id: href,
+          latitude: 51.5074,
+          longitude: -0.1278,
         });
       });
 
@@ -374,6 +519,8 @@ export async function scrapeAllSources(): Promise<{ total: number; errors: strin
               is_free: event.is_free || false,
               is_online: event.is_online || false,
               external_id: event.external_id || event.url,
+              latitude: event.latitude || null,
+              longitude: event.longitude || null,
               updated_at: new Date().toISOString(),
             },
             { onConflict: 'source_id,external_id' }
@@ -427,6 +574,8 @@ type ParsedEvent = {
   is_free?: boolean;
   is_online?: boolean;
   external_id?: string;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 function extractXML(xml: string, tag: string): string | null {
@@ -460,18 +609,15 @@ function decodeHTML(text: string): string {
 
 function parseFlexibleDate(dateStr: string): string | null {
   try {
-    // Try ISO format or standard Date parsing
     const d = new Date(dateStr);
     if (!isNaN(d.getTime()) && d.getFullYear() > 2020) return d.toISOString();
 
-    // Try "25 March 2026" / "March 25, 2026" formats
     const ukMatch = dateStr.match(/(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i);
     if (ukMatch) {
       const d2 = new Date(`${ukMatch[2]} ${ukMatch[1]}, ${ukMatch[3]}`);
       if (!isNaN(d2.getTime())) return d2.toISOString();
     }
 
-    // Try with time "March 25, 2026, 5:00 PM"
     const withTime = dateStr.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})/i);
     if (withTime) {
       const d3 = new Date(`${withTime[1]} ${withTime[2]}, ${withTime[3]}`);

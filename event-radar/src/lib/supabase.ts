@@ -23,8 +23,9 @@ export type Source = {
   id: string;
   name: string;
   url: string;
-  scrape_type: 'rss' | 'html' | 'api';
+  scrape_type: 'rss' | 'html' | 'api' | 'eventbrite' | 'ics';
   scrape_config: Record<string, unknown>;
+  category: string;
   enabled: boolean;
   last_scraped_at: string | null;
 };
@@ -51,8 +52,11 @@ export type Event = {
   is_free: boolean;
   is_online: boolean;
   external_id: string | null;
+  latitude: number | null;
+  longitude: number | null;
   created_at: string;
   source?: Source;
   interests?: Interest[];
   action?: 'saved' | 'hidden' | null;
+  actionDate?: string | null;
 };
