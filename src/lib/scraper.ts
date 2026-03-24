@@ -173,8 +173,6 @@ async function scrapeRSS(source: Source): Promise<ParsedEvent[]> {
       is_free: true,
       is_online: false,
       external_id: link.trim(),
-      latitude: coords?.lat || null,
-      longitude: coords?.lng || null,
     });
   }
 
@@ -292,8 +290,6 @@ function scrapeGenericHTML(
       is_free: isFree,
       is_online: isOnline,
       external_id: href,
-      latitude: coords?.lat || null,
-      longitude: coords?.lng || null,
     });
   });
 
@@ -347,8 +343,6 @@ function scrapeMCA($: cheerio.CheerioAPI, baseUrl: string): ParsedEvent[] {
       is_free: isFree,
       is_online: isOnline,
       external_id: href,
-      latitude: coords?.lat || null,
-      longitude: coords?.lng || null,
     });
   });
 
@@ -396,8 +390,6 @@ function scrapeFabians($: cheerio.CheerioAPI, baseUrl: string): ParsedEvent[] {
       is_free: false,
       is_online: false,
       external_id: href,
-      latitude: coords?.lat || null,
-      longitude: coords?.lng || null,
     });
   });
 
@@ -443,8 +435,6 @@ async function scrapeAPI(source: Source): Promise<ParsedEvent[]> {
           is_free: false,
           is_online: false,
           external_id: href,
-          latitude: 51.5074,
-          longitude: -0.1278,
         });
       });
 
@@ -519,8 +509,6 @@ export async function scrapeAllSources(): Promise<{ total: number; errors: strin
               is_free: event.is_free || false,
               is_online: event.is_online || false,
               external_id: event.external_id || event.url,
-              latitude: event.latitude || null,
-              longitude: event.longitude || null,
               updated_at: new Date().toISOString(),
             },
             { onConflict: 'source_id,external_id' }
@@ -574,8 +562,6 @@ type ParsedEvent = {
   is_free?: boolean;
   is_online?: boolean;
   external_id?: string;
-  latitude?: number | null;
-  longitude?: number | null;
 };
 
 function extractXML(xml: string, tag: string): string | null {
