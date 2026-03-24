@@ -59,25 +59,84 @@ export default function Dashboard() {
   const fetchEvents = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (activeFilter !== 'all') params.set('interest', activeFilter);
-      if (searchQuery) params.set('search', searchQuery);
+      // Query Supabase directly from client (avoids API route issues on Vercel)
+      let query = supabase
+        .from('events')
+        .select(`
+          *,
+          source:sources(id, name, url, category),
+          interests:event_interests(interest:interests(*)),
+          actions:event_actions(action, created_at)
+        `)
+        .gte('date', new Date().toISOString())
+        .order('date', { ascending: true });
 
-      if (activeSection === 'saved') {
-        params.set('saved', 'true');
-      } else if (activeSection === 'hidden') {
-        params.set('hidden', 'true');
-      } else if (activeSection === 'upcoming') {
-        params.set('upcoming', 'true');
-        params.set('days', upcomingDays.toString());
-      } else if (activeSection === 'discover') {
-        params.set('unjudged', 'true');
+      if (activeFilter !== 'all') {
+        query = supabase
+          .from('events')
+          .select(`
+            *,
+            source:sources(id, name, url, category),
+            interests:event_interests!inner(interest:interests!inner(*)),
+            actions:event_actions(action, created_at)
+          `)
+          .eq('interests.interest.slug', activeFilter)
+          .gte('date', new Date().toISOString())
+          .order('date', { ascending: true });
       }
 
-      const res = await fetch(`/api/events?${params}`);
-      const data = await res.json();
-      setEvents(Array.isArray(data) ? data : []);
-    } catch {
+      if (activeSection === 'upcoming') {
+        const maxDate = new Date();
+        maxDate.setDate(maxDate.getDate() + upcomingDays);
+        query = query.lte('date', maxDate.toISOString());
+      }
+
+      const { data: rawEvents, error } = await query;
+
+      if (error) {
+        console.error('Supabase query error:', error);
+        setEvents([]);
+        setLoading(false);
+        return;
+      }
+
+      // Post-process: flatten interests and actions
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let processed = (rawEvents || []).map((event: any) => {
+        const eventInterests = (event.interests || []).map(
+          (ei: { interest: Record<string, unknown> }) => ei.interest
+        );
+        const actionEntry = event.actions?.[0];
+        const action = actionEntry?.action || null;
+        const actionDate = actionEntry?.created_at || null;
+        return { ...event, interests: eventInterests, action, actionDate, actions: undefined };
+      }) as Event[];
+
+      // View mode filtering
+      if (activeSection === 'hidden') {
+        processed = processed.filter(e => e.action === 'hidden');
+      } else if (activeSection === 'saved' || activeSection === 'upcoming') {
+        processed = processed.filter(e => e.action === 'saved');
+      } else if (activeSection === 'discover') {
+        processed = processed.filter(e => !e.action);
+      } else {
+        processed = processed.filter(e => e.action !== 'hidden');
+      }
+
+      // Search filter
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        processed = processed.filter(
+          e =>
+            e.title.toLowerCase().includes(q) ||
+            (e.description || '').toLowerCase().includes(q) ||
+            (e.location || '').toLowerCase().includes(q)
+        );
+      }
+
+      setEvents(processed);
+    } catch (err) {
+      console.error('fetchEvents error:', err);
       setEvents([]);
     }
     setLoading(false);
@@ -85,14 +144,13 @@ export default function Dashboard() {
 
   const fetchCounts = useCallback(async () => {
     try {
-      const [savedRes, hiddenRes] = await Promise.all([
-        fetch('/api/events?saved=true'),
-        fetch('/api/events?hidden=true'),
-      ]);
-      const savedData = await savedRes.json();
-      const hiddenData = await hiddenRes.json();
-      setSavedCount(Array.isArray(savedData) ? savedData.length : 0);
-      setHiddenCount(Array.isArray(hiddenData) ? hiddenData.length : 0);
+      const { data: actions } = await supabase
+        .from('event_actions')
+        .select('action, event_id');
+      const saved = (actions || []).filter(a => a.action === 'saved');
+      const hidden = (actions || []).filter(a => a.action === 'hidden');
+      setSavedCount(saved.length);
+      setHiddenCount(hidden.length);
     } catch {
       // counts fail silently
     }
