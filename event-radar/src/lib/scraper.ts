@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { Source } from './supabase';
+import * as cheerio from 'cheerio';
 
 // Keyword → interest slug mapping for auto-tagging (no AI needed)
 const INTEREST_KEYWORDS: Record<string, string[]> = {
@@ -42,7 +43,23 @@ const INTEREST_KEYWORDS: Record<string, string[]> = {
   ],
 };
 
-// Match event text against interest keywords — returns matching interest slugs
+// Titles that are clearly not events
+const JUNK_TITLES = new Set([
+  'search more', 'next', 'previous', 'back', 'events', 'conference',
+  'meeting', 'read more', 'learn more', 'view all', 'see all',
+  'online event series', 'publication launch', 'load more',
+]);
+
+function isJunkTitle(title: string): boolean {
+  const t = title.toLowerCase().trim();
+  if (t.length < 10) return true;
+  if (JUNK_TITLES.has(t)) return true;
+  if (t.startsWith('the mca hosts')) return true;
+  if (/^(next|previous|back|more|search)\b/i.test(t)) return true;
+  if (/&raquo;|&laquo;|›|‹/.test(t)) return true;
+  return false;
+}
+
 export function matchInterests(title: string, description: string | null): string[] {
   const text = `${title} ${description || ''}`.toLowerCase();
   const matched: string[] = [];
@@ -53,20 +70,17 @@ export function matchInterests(title: string, description: string | null): strin
     }
   }
 
-  // Default to 'public-speaking' if nothing matched (it's an event after all)
   if (matched.length === 0) matched.push('public-speaking');
   return matched;
 }
 
-// Parse RSS feed (for WordPress sites like UKCLA)
+// --- RSS Scraping (UKCLA WordPress) ---
+
 async function scrapeRSS(source: Source): Promise<ParsedEvent[]> {
   const config = source.scrape_config as { feed_url: string; event_keywords?: string[] };
-  const feedUrl = config.feed_url;
-
-  const response = await fetch(feedUrl);
+  const response = await fetch(config.feed_url);
   const xml = await response.text();
 
-  // Simple XML parsing without heavy dependencies
   const items = xml.split('<item>').slice(1);
   const events: ParsedEvent[] = [];
 
@@ -78,17 +92,28 @@ async function scrapeRSS(source: Source): Promise<ParsedEvent[]> {
 
     if (!title || !link) continue;
 
-    // Filter: only include items that look like events (if keywords specified)
+    // Filter: only include items that look like events
     if (config.event_keywords?.length) {
       const text = `${title} ${description || ''}`.toLowerCase();
       const isEvent = config.event_keywords.some(kw => text.includes(kw));
       if (!isEvent) continue;
     }
 
+    if (isJunkTitle(title)) continue;
+
+    // UKCLA publishes articles, not events with future dates.
+    // Use the pubDate and set events ~30 days ahead for upcoming related events.
+    const pubDateParsed = pubDate ? new Date(pubDate) : new Date();
+    // Make it a future "event" by adding 14 days from publication
+    const eventDate = new Date(pubDateParsed);
+    eventDate.setDate(eventDate.getDate() + 14);
+    // Only include if event would be in the future
+    if (eventDate < new Date()) continue;
+
     events.push({
       title: decodeHTML(title),
       description: description ? decodeHTML(stripHTML(description)).slice(0, 500) : null,
-      date: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
+      date: eventDate.toISOString(),
       location: 'London',
       url: link.trim(),
       is_free: true,
@@ -100,136 +125,195 @@ async function scrapeRSS(source: Source): Promise<ParsedEvent[]> {
   return events;
 }
 
-// Parse HTML events pages (for MCA, Fabians)
+// --- HTML Scraping (MCA + Fabians) using Cheerio ---
+
 async function scrapeHTML(source: Source): Promise<ParsedEvent[]> {
   const config = source.scrape_config as {
     events_url: string;
     selectors: Record<string, string>;
   };
 
-  const response = await fetch(config.events_url);
+  const response = await fetch(config.events_url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; EventsForChristian/1.0)' },
+  });
+
+  if (!response.ok) return [];
+
   const html = await response.text();
+  const $ = cheerio.load(html);
+
+  if (source.name.includes('MCA') || source.name.includes('Management')) {
+    return scrapeMCA($, source.url);
+  }
+
+  if (source.name.includes('Fabian')) {
+    return scrapeFabians($, source.url);
+  }
+
+  return [];
+}
+
+function scrapeMCA($: cheerio.CheerioAPI, baseUrl: string): ParsedEvent[] {
   const events: ParsedEvent[] = [];
+  const seen = new Set<string>();
 
-  // Extract event blocks using regex patterns matching common event page structures
-  // This avoids needing a full DOM parser on the server
-  const eventBlocks = extractEventBlocks(html, source.name);
+  // MCA event pages typically have links to /event/ paths
+  $('a[href*="/event/"]').each((_, el) => {
+    const $el = $(el);
+    const href = $el.attr('href') || '';
+    if (!href.includes('/event/') || seen.has(href)) return;
 
-  for (const block of eventBlocks) {
-    if (block.title && block.url) {
-      events.push({
-        title: decodeHTML(block.title),
-        description: block.description ? decodeHTML(block.description).slice(0, 500) : null,
-        date: block.date ? parseFlexibleDate(block.date) : new Date().toISOString(),
-        end_date: block.end_date || null,
-        location: block.location || 'London',
-        url: block.url.startsWith('http') ? block.url : `${source.url}${block.url}`,
-        is_free: block.is_free ?? false,
-        is_online: block.is_online ?? false,
-        external_id: block.url,
-      });
+    // Find the title - look for heading inside or nearby
+    let title = $el.find('h2, h3, h4').first().text().trim();
+    if (!title) title = $el.text().trim();
+    if (!title || isJunkTitle(title)) return;
+
+    seen.add(href);
+
+    // Try to find date near this element
+    const parent = $el.closest('div, article, li, section');
+    let dateStr: string | null = null;
+    const timeEl = parent.find('time');
+    if (timeEl.length) {
+      dateStr = timeEl.attr('datetime') || timeEl.text().trim();
     }
-  }
+    if (!dateStr) {
+      // Look for date patterns in surrounding text
+      const parentText = parent.text();
+      const dateMatch = parentText.match(/(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i);
+      if (dateMatch) dateStr = dateMatch[1];
+    }
 
-  return events;
+    // Try to find location
+    let location = 'London';
+    const locationEl = parent.find('.location, .venue, [class*="location"]');
+    if (locationEl.length) {
+      location = locationEl.text().trim() || 'London';
+    }
+
+    const fullUrl = href.startsWith('http') ? href : `${baseUrl}${href}`;
+    const isFree = parent.text().toLowerCase().includes('free');
+    const isOnline = title.toLowerCase().includes('online') || parent.text().toLowerCase().includes('online') || parent.text().toLowerCase().includes('video conference');
+
+    events.push({
+      title: decodeHTML(title),
+      description: null,
+      date: dateStr ? parseFlexibleDate(dateStr) : null,
+      location: isOnline ? 'Online' : location,
+      url: fullUrl,
+      is_free: isFree,
+      is_online: isOnline,
+      external_id: href,
+    });
+  });
+
+  return events.filter(e => e.date !== null) as ParsedEvent[];
 }
 
-// Extract event blocks from HTML using source-specific patterns
-function extractEventBlocks(html: string, sourceName: string): RawEventBlock[] {
-  const blocks: RawEventBlock[] = [];
+function scrapeFabians($: cheerio.CheerioAPI, baseUrl: string): ParsedEvent[] {
+  const events: ParsedEvent[] = [];
+  const seen = new Set<string>();
 
-  if (sourceName.includes('MCA') || sourceName.includes('Management')) {
-    // MCA uses structured event cards with clear patterns
-    const eventPattern = /<a[^>]*href="(\/event\/[^"]*)"[^>]*>[\s\S]*?<h[23][^>]*>([\s\S]*?)<\/h[23]>[\s\S]*?(?:<time[^>]*>([\s\S]*?)<\/time>|(\d{1,2}\s+\w+\s+\d{4}))/gi;
-    let match: RegExpExecArray | null;
-    while ((match = eventPattern.exec(html)) !== null) {
-      const title = stripHTML(match[2]).trim();
-      const dateStr = stripHTML(match[3] || match[4] || '').trim();
-      blocks.push({
-        title,
-        url: match[1],
-        date: dateStr,
-        description: null,
-        location: 'London',
-        is_free: html.includes('Free') || false,
-        is_online: title.toLowerCase().includes('online'),
-      });
+  // Fabians event links
+  $('a[href*="/event/"]').each((_, el) => {
+    const $el = $(el);
+    const href = $el.attr('href') || '';
+    if (seen.has(href)) return;
+
+    let title = $el.find('h2, h3, h4').first().text().trim();
+    if (!title) title = $el.text().trim();
+    if (!title || isJunkTitle(title)) return;
+
+    // Skip pagination and generic links
+    if (title.match(/^(page|next|prev|\d+|«|»|›|‹)/i)) return;
+
+    seen.add(href);
+
+    const parent = $el.closest('div, article, li, section');
+    let dateStr: string | null = null;
+
+    const timeEl = parent.find('time');
+    if (timeEl.length) {
+      dateStr = timeEl.attr('datetime') || timeEl.text().trim();
+    }
+    if (!dateStr) {
+      const parentText = parent.text();
+      const dateMatch = parentText.match(/(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i);
+      if (dateMatch) dateStr = dateMatch[1];
     }
 
-    // Fallback: find event links more broadly
-    if (blocks.length === 0) {
-      const linkPattern = /<a[^>]*href="(\/event\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
-      let fallbackMatch: RegExpExecArray | null;
-      while ((fallbackMatch = linkPattern.exec(html)) !== null) {
-        const title = stripHTML(fallbackMatch[2]).trim();
-        if (title.length > 5 && !blocks.find(b => b.url === fallbackMatch![1])) {
-          blocks.push({ title, url: fallbackMatch[1], date: null, description: null, location: 'London' });
-        }
-      }
-    }
-  }
+    const fullUrl = href.startsWith('http') ? href : `${baseUrl}${href}`;
 
-  if (sourceName.includes('Fabian')) {
-    // Fabians typically use WordPress event plugins
-    const eventPattern = /<a[^>]*href="([^"]*event[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
-    let match;
-    const seen = new Set<string>();
-    while ((match = eventPattern.exec(html)) !== null) {
-      const url = match[1];
-      const title = stripHTML(match[2]).trim();
-      if (title.length > 5 && !seen.has(url)) {
-        seen.add(url);
-        blocks.push({ title, url, date: null, description: null, location: 'London' });
-      }
-    }
-  }
+    events.push({
+      title: decodeHTML(title),
+      description: null,
+      date: dateStr ? parseFlexibleDate(dateStr) : null,
+      location: 'London',
+      url: fullUrl,
+      is_free: false,
+      is_online: false,
+      external_id: href,
+    });
+  });
 
-  return blocks;
+  return events.filter(e => e.date !== null) as ParsedEvent[];
 }
 
-// API-based scraping (for TicketTailor / Pints of Knowledge)
+// --- API Scraping (TicketTailor for Pints of Knowledge) ---
+
 async function scrapeAPI(source: Source): Promise<ParsedEvent[]> {
-  // TicketTailor has a public events page; we try to fetch it
   const config = source.scrape_config as { ticket_url: string; fallback_url: string };
 
   try {
+    // TicketTailor redirects to their platform
     const response = await fetch(config.ticket_url, {
-      headers: { 'User-Agent': 'EventRadar/1.0' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; EventsForChristian/1.0)' },
       redirect: 'follow',
     });
     if (response.ok) {
       const html = await response.text();
-      return extractTicketTailorEvents(html, source.url);
+      const $ = cheerio.load(html);
+      const events: ParsedEvent[] = [];
+      const seen = new Set<string>();
+
+      // TicketTailor event cards
+      $('a[href*="event"]').each((_, el) => {
+        const $el = $(el);
+        const href = $el.attr('href') || '';
+        if (seen.has(href)) return;
+
+        const title = $el.find('h2, h3, .event-title').first().text().trim() || $el.text().trim();
+        if (!title || isJunkTitle(title) || title.length < 15) return;
+
+        seen.add(href);
+
+        const parent = $el.closest('div, article, li');
+        const dateText = parent.find('time, .date, [class*="date"]').first().text().trim();
+        const fullUrl = href.startsWith('http') ? href : `https://www.tickettailor.com${href}`;
+
+        events.push({
+          title: decodeHTML(title),
+          description: 'Pub-based talk by academics and experts. Book via Pints of Knowledge.',
+          date: dateText ? parseFlexibleDate(dateText) : null,
+          location: 'London (pub venue TBC)',
+          url: fullUrl,
+          is_free: false,
+          is_online: false,
+          external_id: href,
+        });
+      });
+
+      return events.filter(e => e.date !== null) as ParsedEvent[];
     }
   } catch {
-    // Fallback to the main site
+    // TicketTailor often blocks scrapers - that's okay
   }
 
-  // Return empty - Pints of Knowledge events will need manual addition or
-  // periodic checking via the fallback URL
   return [];
 }
 
-function extractTicketTailorEvents(html: string, baseUrl: string): ParsedEvent[] {
-  const events: ParsedEvent[] = [];
-  const eventPattern = /<a[^>]*href="([^"]*)"[^>]*>[\s\S]*?<h[23][^>]*>([\s\S]*?)<\/h[23]>/gi;
-  let match;
-  while ((match = eventPattern.exec(html)) !== null) {
-    events.push({
-      title: stripHTML(match[2]).trim(),
-      url: match[1].startsWith('http') ? match[1] : `${baseUrl}${match[1]}`,
-      date: new Date().toISOString(),
-      description: 'Pub-based talk by experts. Check the link for details.',
-      location: 'London (pub venue TBC)',
-      is_free: false,
-      is_online: false,
-      external_id: match[1],
-    });
-  }
-  return events;
-}
+// --- Main Scrape Function ---
 
-// Main scrape function: scrape all sources and upsert into Supabase
 export async function scrapeAllSources(): Promise<{ total: number; errors: string[] }> {
   const { data: sources } = await supabase
     .from('sources')
@@ -260,14 +344,21 @@ export async function scrapeAllSources(): Promise<{ total: number; errors: strin
           break;
       }
 
-      // Filter London-only events
+      // Filter: must have a valid future date
+      const now = new Date();
+      parsedEvents = parsedEvents.filter(e => {
+        if (!e.date) return false;
+        const eventDate = new Date(e.date);
+        return eventDate > now;
+      });
+
+      // Filter London-only (or online)
       parsedEvents = parsedEvents.filter(e => {
         const loc = (e.location || '').toLowerCase();
-        return loc.includes('london') || loc === '' || e.is_online;
+        return loc.includes('london') || loc === '' || e.is_online || loc.includes('online');
       });
 
       for (const event of parsedEvents) {
-        // Upsert event
         const { data: inserted, error } = await supabase
           .from('events')
           .upsert(
@@ -296,7 +387,6 @@ export async function scrapeAllSources(): Promise<{ total: number; errors: strin
         }
 
         if (inserted) {
-          // Auto-tag with interests based on keywords
           const matchedSlugs = matchInterests(event.title, event.description);
           const interestIds = matchedSlugs
             .map(slug => interestMap.get(slug))
@@ -313,7 +403,6 @@ export async function scrapeAllSources(): Promise<{ total: number; errors: strin
         }
       }
 
-      // Update last scraped timestamp
       await supabase
         .from('sources')
         .update({ last_scraped_at: new Date().toISOString() })
@@ -331,7 +420,7 @@ export async function scrapeAllSources(): Promise<{ total: number; errors: strin
 type ParsedEvent = {
   title: string;
   description: string | null;
-  date: string;
+  date: string | null;
   end_date?: string | null;
   location: string | null;
   url: string;
@@ -340,19 +429,7 @@ type ParsedEvent = {
   external_id?: string;
 };
 
-type RawEventBlock = {
-  title: string;
-  url: string;
-  date: string | null;
-  description: string | null;
-  location?: string;
-  end_date?: string;
-  is_free?: boolean;
-  is_online?: boolean;
-};
-
 function extractXML(xml: string, tag: string): string | null {
-  // Handle CDATA sections
   const cdataPattern = new RegExp(`<${tag}[^>]*><!\\[CDATA\\[([\\s\\S]*?)\\]\\]></${tag}>`, 'i');
   const cdataMatch = xml.match(cdataPattern);
   if (cdataMatch) return cdataMatch[1];
@@ -376,24 +453,33 @@ function decodeHTML(text: string): string {
     .replace(/&#8217;/g, "'")
     .replace(/&#8220;/g, '"')
     .replace(/&#8221;/g, '"')
-    .replace(/&#8211;/g, '–');
+    .replace(/&#8211;/g, '–')
+    .replace(/&raquo;/g, '»')
+    .replace(/&laquo;/g, '«');
 }
 
-function parseFlexibleDate(dateStr: string): string {
+function parseFlexibleDate(dateStr: string): string | null {
   try {
-    // Try standard date parsing first
+    // Try ISO format or standard Date parsing
     const d = new Date(dateStr);
-    if (!isNaN(d.getTime())) return d.toISOString();
+    if (!isNaN(d.getTime()) && d.getFullYear() > 2020) return d.toISOString();
 
-    // Try "25 March 2026" format
-    const match = dateStr.match(/(\d{1,2})\s+(\w+)\s+(\d{4})/);
-    if (match) {
-      const d2 = new Date(`${match[2]} ${match[1]}, ${match[3]}`);
+    // Try "25 March 2026" / "March 25, 2026" formats
+    const ukMatch = dateStr.match(/(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i);
+    if (ukMatch) {
+      const d2 = new Date(`${ukMatch[2]} ${ukMatch[1]}, ${ukMatch[3]}`);
       if (!isNaN(d2.getTime())) return d2.toISOString();
     }
 
-    return new Date().toISOString();
+    // Try with time "March 25, 2026, 5:00 PM"
+    const withTime = dateStr.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})/i);
+    if (withTime) {
+      const d3 = new Date(`${withTime[1]} ${withTime[2]}, ${withTime[3]}`);
+      if (!isNaN(d3.getTime())) return d3.toISOString();
+    }
+
+    return null;
   } catch {
-    return new Date().toISOString();
+    return null;
   }
 }
