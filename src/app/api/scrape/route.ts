@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { scrapeAllSources } from '@/lib/scraper';
 
+// Allow up to 60s for scraping (Vercel hobby plan max)
+export const maxDuration = 60;
+
 // POST /api/scrape — trigger a scrape of all sources
 // Can be called manually or via Vercel Cron
 export async function POST(request: NextRequest) {

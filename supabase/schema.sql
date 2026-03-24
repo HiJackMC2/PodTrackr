@@ -183,6 +183,36 @@ INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
   ('Overseas Development Institute', 'https://odi.org', 'html', '{"events_url": "https://odi.org/en/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
 ON CONFLICT (name) DO NOTHING;
 
+-- Category N: Health, Poverty & Social Policy
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('Health Foundation', 'https://www.health.org.uk', 'html', '{"events_url": "https://www.health.org.uk/what-we-do/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Joseph Rowntree Foundation', 'https://www.jrf.org.uk', 'html', '{"events_url": "https://www.jrf.org.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Institute of Economic Affairs', 'https://iea.org.uk', 'html', '{"events_url": "https://iea.org.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
+ON CONFLICT (name) DO NOTHING;
+
+-- Category O: Science & Research Institutes
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('Alan Turing Institute', 'https://www.turing.ac.uk', 'html', '{"events_url": "https://www.turing.ac.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Francis Crick Institute', 'https://www.crick.ac.uk', 'html', '{"events_url": "https://www.crick.ac.uk/whats-on/events", "selectors": {"link": "a[href*=event], a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}')
+ON CONFLICT (name) DO NOTHING;
+
+-- Category P: Venues, Museums & Galleries
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('Kings Place', 'https://www.kingsplace.co.uk', 'html', '{"events_url": "https://www.kingsplace.co.uk/whats-on/", "selectors": {"link": "a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('London Library', 'https://www.londonlibrary.co.uk', 'html', '{"events_url": "https://www.londonlibrary.co.uk/whats-on/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('British Museum', 'https://www.britishmuseum.org', 'html', '{"events_url": "https://www.britishmuseum.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Tate Modern', 'https://www.tate.org.uk', 'html', '{"events_url": "https://www.tate.org.uk/whats-on?type=talks_and_lectures", "selectors": {"link": "a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('National Gallery', 'https://www.nationalgallery.org.uk', 'html', '{"events_url": "https://www.nationalgallery.org.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
+ON CONFLICT (name) DO NOTHING;
+
+-- Category Q: Additional Think Tanks & Policy
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('Centre for European Reform', 'https://www.cer.eu', 'html', '{"events_url": "https://www.cer.eu/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Ditchley Foundation', 'https://www.ditchley.com', 'html', '{"events_url": "https://www.ditchley.com/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Wilton Park', 'https://www.wiltonpark.org.uk', 'html', '{"events_url": "https://www.wiltonpark.org.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Tony Blair Institute', 'https://www.institute.global', 'html', '{"events_url": "https://www.institute.global/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
+ON CONFLICT (name) DO NOTHING;
+
 -- Seed: Interests
 INSERT INTO interests (name, slug, color, icon) VALUES
   ('Constitutional Law', 'constitutional-law', '#dc2626', 'scale'),

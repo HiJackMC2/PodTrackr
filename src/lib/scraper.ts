@@ -133,7 +133,7 @@ export function matchInterests(title: string, description: string | null): strin
 
 async function scrapeRSS(source: Source): Promise<ParsedEvent[]> {
   const config = source.scrape_config as { feed_url: string; event_keywords?: string[] };
-  const response = await fetch(config.feed_url);
+  const response = await fetch(config.feed_url, { signal: AbortSignal.timeout(8000) });
   const xml = await response.text();
 
   const items = xml.split('<item>').slice(1);
@@ -191,6 +191,7 @@ async function scrapeHTML(source: Source): Promise<ParsedEvent[]> {
   try {
     response = await fetch(config.events_url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; EventsForChristian/1.0)' },
+      signal: AbortSignal.timeout(8000),
     });
   } catch {
     return [];
@@ -417,6 +418,7 @@ async function scrapeAPI(source: Source): Promise<ParsedEvent[]> {
     const response = await fetch(config.ticket_url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; EventsForChristian/1.0)' },
       redirect: 'follow',
+      signal: AbortSignal.timeout(8000),
     });
     if (response.ok) {
       const html = await response.text();
@@ -461,6 +463,47 @@ async function scrapeAPI(source: Source): Promise<ParsedEvent[]> {
 
 // --- Main Scrape Function ---
 
+// Scrape a single source and return parsed events
+async function scrapeSource(source: Source): Promise<{ events: ParsedEvent[]; error?: string }> {
+  try {
+    let parsedEvents: ParsedEvent[] = [];
+
+    switch (source.scrape_type) {
+      case 'rss':
+        parsedEvents = await scrapeRSS(source);
+        break;
+      case 'html':
+        parsedEvents = await scrapeHTML(source);
+        break;
+      case 'api':
+        parsedEvents = await scrapeAPI(source);
+        break;
+    }
+
+    // Filter: must have a valid future date
+    const now = new Date();
+    parsedEvents = parsedEvents.filter(e => {
+      if (!e.date) return false;
+      const eventDate = new Date(e.date);
+      return eventDate > now;
+    });
+
+    // Filter London-only (or online)
+    const NON_LONDON_CITIES = ['manchester', 'birmingham', 'edinburgh', 'glasgow', 'cardiff', 'bristol', 'leeds', 'liverpool', 'sheffield', 'newcastle', 'nottingham', 'belfast', 'oxford', 'cambridge'];
+    parsedEvents = parsedEvents.filter(e => {
+      const loc = (e.location || '').toLowerCase();
+      if (e.is_online || loc.includes('online')) return true;
+      if (loc === '' || loc === 'london' || loc.includes('london')) return true;
+      if (NON_LONDON_CITIES.some(city => loc.includes(city))) return false;
+      return true;
+    });
+
+    return { events: parsedEvents };
+  } catch (err) {
+    return { events: [], error: `Source "${source.name}": ${err instanceof Error ? err.message : 'Unknown error'}` };
+  }
+}
+
 export async function scrapeAllSources(): Promise<{ total: number; errors: string[] }> {
   const { data: sources } = await supabase
     .from('sources')
@@ -475,96 +518,77 @@ export async function scrapeAllSources(): Promise<{ total: number; errors: strin
   let total = 0;
   const errors: string[] = [];
 
-  for (const source of sources) {
-    try {
-      let parsedEvents: ParsedEvent[] = [];
+  // Scrape all sources concurrently in batches of 10
+  const BATCH_SIZE = 10;
+  const allResults: { source: Source; events: ParsedEvent[]; error?: string }[] = [];
 
-      switch (source.scrape_type) {
-        case 'rss':
-          parsedEvents = await scrapeRSS(source);
-          break;
-        case 'html':
-          parsedEvents = await scrapeHTML(source);
-          break;
-        case 'api':
-          parsedEvents = await scrapeAPI(source);
-          break;
-      }
+  for (let i = 0; i < sources.length; i += BATCH_SIZE) {
+    const batch = sources.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(async (source) => {
+        const result = await scrapeSource(source);
+        return { source, ...result };
+      })
+    );
+    allResults.push(...results);
+  }
 
-      // Filter: must have a valid future date
-      const now = new Date();
-      parsedEvents = parsedEvents.filter(e => {
-        if (!e.date) return false;
-        const eventDate = new Date(e.date);
-        return eventDate > now;
-      });
-
-      // Filter London-only (or online)
-      // Most of our sources are London-based, so we're permissive here —
-      // only exclude events that explicitly mention non-London UK cities
-      const NON_LONDON_CITIES = ['manchester', 'birmingham', 'edinburgh', 'glasgow', 'cardiff', 'bristol', 'leeds', 'liverpool', 'sheffield', 'newcastle', 'nottingham', 'belfast', 'oxford', 'cambridge'];
-      parsedEvents = parsedEvents.filter(e => {
-        const loc = (e.location || '').toLowerCase();
-        if (e.is_online || loc.includes('online')) return true;
-        if (loc === '' || loc === 'london' || loc.includes('london')) return true;
-        // Exclude if explicitly in another city
-        if (NON_LONDON_CITIES.some(city => loc.includes(city))) return false;
-        // Otherwise assume London (our sources are London-centric)
-        return true;
-      });
-
-      for (const event of parsedEvents) {
-        const { data: inserted, error } = await supabase
-          .from('events')
-          .upsert(
-            {
-              source_id: source.id,
-              title: event.title,
-              description: event.description,
-              date: event.date,
-              end_date: event.end_date || null,
-              location: event.location,
-              city: event.is_online ? 'Online' : 'London',
-              url: event.url,
-              is_free: event.is_free || false,
-              is_online: event.is_online || false,
-              external_id: event.external_id || event.url,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'source_id,external_id' }
-          )
-          .select()
-          .single();
-
-        if (error) {
-          errors.push(`Event "${event.title}": ${error.message}`);
-          continue;
-        }
-
-        if (inserted) {
-          const matchedSlugs = matchInterests(event.title, event.description);
-          const interestIds = matchedSlugs
-            .map(slug => interestMap.get(slug))
-            .filter(Boolean) as string[];
-
-          if (interestIds.length > 0) {
-            await supabase.from('event_interests').upsert(
-              interestIds.map(iid => ({ event_id: inserted.id, interest_id: iid })),
-              { onConflict: 'event_id,interest_id' }
-            );
-          }
-
-          total++;
-        }
-      }
-
-      await supabase
-        .from('sources')
-        .update({ last_scraped_at: new Date().toISOString() })
-        .eq('id', source.id);
-    } catch (err) {
-      errors.push(`Source "${source.name}": ${err instanceof Error ? err.message : 'Unknown error'}`);
+  // Insert events into DB
+  for (const { source, events: parsedEvents, error: scrapeError } of allResults) {
+    if (scrapeError) {
+      errors.push(scrapeError);
+      continue;
     }
+
+    for (const event of parsedEvents) {
+      const { data: inserted, error } = await supabase
+        .from('events')
+        .upsert(
+          {
+            source_id: source.id,
+            title: event.title,
+            description: event.description,
+            date: event.date,
+            end_date: event.end_date || null,
+            location: event.location,
+            city: event.is_online ? 'Online' : 'London',
+            url: event.url,
+            is_free: event.is_free || false,
+            is_online: event.is_online || false,
+            external_id: event.external_id || event.url,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'source_id,external_id' }
+        )
+        .select()
+        .single();
+
+      if (error) {
+        errors.push(`Event "${event.title}": ${error.message}`);
+        continue;
+      }
+
+      if (inserted) {
+        const matchedSlugs = matchInterests(event.title, event.description);
+        const interestIds = matchedSlugs
+          .map(slug => interestMap.get(slug))
+          .filter(Boolean) as string[];
+
+        if (interestIds.length > 0) {
+          await supabase.from('event_interests').upsert(
+            interestIds.map(iid => ({ event_id: inserted.id, interest_id: iid })),
+            { onConflict: 'event_id,interest_id' }
+          );
+        }
+
+        total++;
+      }
+    }
+
+    await supabase
+      .from('sources')
+      .update({ last_scraped_at: new Date().toISOString() })
+      .eq('id', source.id);
   }
 
   return { total, errors };
