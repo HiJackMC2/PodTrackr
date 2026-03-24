@@ -1,0 +1,7 @@
+{
+  "name": "podtrackr",
+  "private": true,
+  "scripts": {
+    "vercel-build": "cd event-radar && npm install && npm run build"
+  }
+}
