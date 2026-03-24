@@ -288,9 +288,9 @@ export default function TravelTime({ event }: TravelTimeProps) {
           </div>
 
           {estimate !== null && (
-            <div className="flex items-center justify-between bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 border border-zinc-200 dark:border-zinc-700">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 border border-zinc-200 dark:border-zinc-700">
               <div className="flex items-center gap-2">
-                <Navigation className="w-4 h-4 text-indigo-500" />
+                <Navigation className="w-4 h-4 text-indigo-500 shrink-0" />
                 <div>
                   <span className="text-sm font-bold text-zinc-900 dark:text-white">~{estimate} min</span>
                   <span className="text-xs text-zinc-500 ml-1.5">
@@ -303,10 +303,10 @@ export default function TravelTime({ event }: TravelTimeProps) {
                   href={mapsUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-lg transition-colors"
+                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-lg transition-colors w-full sm:w-auto justify-center"
                 >
                   <MapPin className="w-3 h-3" />
-                  Open in Maps
+                  Open in Google Maps
                   <ExternalLink className="w-3 h-3" />
                 </a>
               )}

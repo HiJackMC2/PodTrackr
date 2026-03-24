@@ -120,7 +120,7 @@ export default function EventMap({ events, onEventClick }: EventMapProps) {
   return (
     <div
       ref={mapRef}
-      className="w-full h-[400px] md:h-[500px] rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden"
+      className="w-full h-[300px] sm:h-[400px] md:h-[500px] landscape:h-[50vh] rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden"
       style={{ zIndex: 0 }}
     />
   );

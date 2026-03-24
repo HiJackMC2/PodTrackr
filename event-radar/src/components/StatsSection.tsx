@@ -169,7 +169,7 @@ export default function StatsSection() {
         <div className="space-y-2.5">
           {stats.interestBreakdown.map(interest => (
             <div key={interest.name} className="flex items-center gap-3">
-              <span className="text-xs text-zinc-600 dark:text-zinc-400 w-36 truncate shrink-0">
+              <span className="text-[10px] sm:text-xs text-zinc-600 dark:text-zinc-400 w-24 sm:w-36 truncate shrink-0">
                 {interest.name}
               </span>
               <div className="flex-1 h-5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
@@ -259,10 +259,10 @@ const METRIC_COLORS: Record<string, { bg: string; text: string; icon: string }> 
 function MetricCard({ icon, value, label, color }: { icon: React.ReactNode; value: number | string; label: string; color: string }) {
   const c = METRIC_COLORS[color] || METRIC_COLORS.indigo;
   return (
-    <div className={`${c.bg} rounded-xl p-4 border border-transparent`}>
-      <div className={`${c.icon} mb-2`}>{icon}</div>
-      <div className={`text-2xl font-bold ${c.text}`}>{value}</div>
-      <div className="text-xs text-zinc-500 mt-0.5">{label}</div>
+    <div className={`${c.bg} rounded-xl p-3 sm:p-4 border border-transparent`}>
+      <div className={`${c.icon} mb-1.5 sm:mb-2`}>{icon}</div>
+      <div className={`text-xl sm:text-2xl font-bold ${c.text}`}>{value}</div>
+      <div className="text-[10px] sm:text-xs text-zinc-500 mt-0.5">{label}</div>
     </div>
   );
 }

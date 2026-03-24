@@ -75,7 +75,7 @@ export default function EventCard({ event, onSave, onHide, onRestore, variant = 
   const [showTravel, setShowTravel] = useState(false);
 
   return (
-    <div className="group relative bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 hover:shadow-lg hover:border-zinc-300 dark:hover:border-zinc-700 transition-all duration-200">
+    <div className="group relative bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3.5 sm:p-5 hover:shadow-lg hover:border-zinc-300 dark:hover:border-zinc-700 transition-all duration-200">
       {/* Top bar: source + timing */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-1.5 min-w-0">
@@ -95,7 +95,7 @@ export default function EventCard({ event, onSave, onHide, onRestore, variant = 
       </div>
 
       {/* Title */}
-      <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-2 leading-snug pr-8">
+      <h3 className="text-base sm:text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-2 leading-snug pr-6 sm:pr-8">
         {event.title}
       </h3>
 
@@ -154,15 +154,15 @@ export default function EventCard({ event, onSave, onHide, onRestore, variant = 
       )}
 
       {/* Actions */}
-      <div className="flex items-center gap-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+      <div className="flex items-center gap-1.5 sm:gap-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
         <a
           href={event.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors"
+          className="flex-1 flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-medium rounded-lg transition-colors"
         >
-          <ExternalLink className="w-4 h-4" />
-          View & Sign Up
+          <ExternalLink className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          <span className="hidden xs:inline">View &</span> Sign Up
         </a>
 
         {/* Add to Calendar */}
@@ -230,7 +230,7 @@ export default function EventCard({ event, onSave, onHide, onRestore, variant = 
       {/* Calendar dropdown */}
       {showCalendar && (
         <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <a
               href={generateGoogleCalendarUrl(event)}
               target="_blank"

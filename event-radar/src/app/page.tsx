@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Event, Interest } from '@/lib/supabase';
 import EventCard from '@/components/EventCard';
@@ -8,6 +8,8 @@ import InterestFilter from '@/components/InterestFilter';
 import UpcomingTimeline from '@/components/UpcomingTimeline';
 import AboutSection from '@/components/AboutSection';
 import StatsSection from '@/components/StatsSection';
+import BottomNav from '@/components/BottomNav';
+import SwipeableCard from '@/components/SwipeableCard';
 import { groupDuplicateEvents, type EventGroup } from '@/lib/event-grouping';
 import {
   Radar,
@@ -25,6 +27,7 @@ import {
   Map as MapIcon,
   List,
   BarChart3,
+  ArrowDown,
 } from 'lucide-react';
 
 const EventMap = lazy(() => import('@/components/EventMap'));
@@ -42,6 +45,12 @@ export default function Dashboard() {
   const [activeSection, setActiveSection] = useState<Section>('discover');
   const [upcomingDays, setUpcomingDays] = useState(14);
   const [upcomingView, setUpcomingView] = useState<'timeline' | 'map'>('timeline');
+
+  // Pull to refresh state
+  const [pullProgress, setPullProgress] = useState(0);
+  const [isPulling, setIsPulling] = useState(false);
+  const pullStartY = useRef(0);
+  const mainRef = useRef<HTMLElement>(null);
 
   // Counts for nav badges
   const [savedCount, setSavedCount] = useState(0);
@@ -118,7 +127,31 @@ export default function Dashboard() {
     }
   }, [fetchEvents, activeSection]);
 
-  // Smart event grouping — deduplicate events from different sources
+  // Pull-to-refresh handlers
+  const handlePullStart = useCallback((e: React.TouchEvent) => {
+    if (window.scrollY === 0) {
+      pullStartY.current = e.touches[0].clientY;
+      setIsPulling(true);
+    }
+  }, []);
+
+  const handlePullMove = useCallback((e: React.TouchEvent) => {
+    if (!isPulling) return;
+    const diff = e.touches[0].clientY - pullStartY.current;
+    if (diff > 0 && window.scrollY === 0) {
+      setPullProgress(Math.min(diff / 120, 1));
+    }
+  }, [isPulling]);
+
+  const handlePullEnd = useCallback(() => {
+    if (pullProgress >= 1) {
+      handleScrape();
+    }
+    setPullProgress(0);
+    setIsPulling(false);
+  }, [pullProgress]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Smart event grouping
   const groupedEvents: EventGroup[] = useMemo(() => {
     if (activeSection === 'discover') {
       return groupDuplicateEvents(events);
@@ -137,7 +170,6 @@ export default function Dashboard() {
   };
 
   const handleSave = async (eventId: string) => {
-    // For grouped events, also save duplicates
     const group = groupedEvents.find(g => g.primary.id === eventId);
     await handleAction(eventId, 'saved');
     if (group) {
@@ -183,6 +215,13 @@ export default function Dashboard() {
     setScraping(false);
   };
 
+  const handleSectionChange = (section: Section) => {
+    setActiveSection(section);
+    setSearchQuery('');
+    setActiveFilter('all');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const NAV_ITEMS: { id: Section; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'discover', label: 'Discover', icon: <Compass className="w-4 h-4" /> },
     { id: 'saved', label: 'Saved', icon: <Bookmark className="w-4 h-4" />, count: savedCount },
@@ -202,27 +241,45 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
+    <div
+      className="min-h-screen bg-zinc-50 dark:bg-zinc-950"
+      onTouchStart={handlePullStart}
+      onTouchMove={handlePullMove}
+      onTouchEnd={handlePullEnd}
+    >
+      {/* Pull to refresh indicator */}
+      {pullProgress > 0 && (
+        <div
+          className="fixed top-0 left-0 right-0 z-[60] flex items-center justify-center pointer-events-none pull-indicator"
+          style={{ transform: `translateY(${pullProgress * 60 - 40}px)`, opacity: pullProgress }}
+        >
+          <div className={`flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-600 text-white text-xs font-medium shadow-lg ${pullProgress >= 1 ? 'scale-110' : ''} transition-transform`}>
+            <ArrowDown className={`w-3.5 h-3.5 transition-transform ${pullProgress >= 1 ? 'rotate-180' : ''}`} />
+            {pullProgress >= 1 ? 'Release to refresh' : 'Pull to refresh'}
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl border-b border-zinc-200 dark:border-zinc-800">
-        <div className="max-w-5xl mx-auto px-4 py-3">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shrink-0">
-                <Radar className="w-5 h-5 text-white" />
+        <div className="max-w-5xl mx-auto px-3 sm:px-4 py-2 sm:py-3">
+          <div className="flex items-center justify-between mb-2 sm:mb-3">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-600 rounded-xl flex items-center justify-center shrink-0">
+                <Radar className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
               </div>
               <div className="min-w-0">
-                <h1 className="text-xl font-bold text-zinc-900 dark:text-white truncate">
+                <h1 className="text-lg sm:text-xl font-bold text-zinc-900 dark:text-white truncate">
                   Events for Christian
                 </h1>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 hidden sm:block">
+                <p className="text-[10px] sm:text-xs text-zinc-500 dark:text-zinc-400 hidden sm:block">
                   London events, curated for you
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               {lastScraped && (
-                <span className="text-xs text-zinc-400 hidden md:block">
+                <span className="text-[10px] sm:text-xs text-zinc-400 hidden lg:block">
                   Updated{' '}
                   {new Date(lastScraped).toLocaleDateString('en-GB', {
                     day: 'numeric',
@@ -235,28 +292,24 @@ export default function Dashboard() {
               <button
                 onClick={handleScrape}
                 disabled={scraping}
-                className="flex items-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs sm:text-sm font-medium rounded-lg transition-colors"
               >
                 {scraping ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
                 ) : (
-                  <RefreshCw className="w-4 h-4" />
+                  <RefreshCw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                 )}
                 <span className="hidden sm:inline">{scraping ? 'Scraping...' : 'Refresh'}</span>
               </button>
             </div>
           </div>
 
-          {/* Navigation tabs */}
-          <nav className="flex gap-1 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
+          {/* Desktop navigation tabs — hidden on mobile (bottom nav instead) */}
+          <nav className="hidden md:flex gap-1 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
             {NAV_ITEMS.map(item => (
               <button
                 key={item.id}
-                onClick={() => {
-                  setActiveSection(item.id);
-                  setSearchQuery('');
-                  setActiveFilter('all');
-                }}
+                onClick={() => handleSectionChange(item.id)}
                 className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
                   activeSection === item.id
                     ? 'bg-indigo-600 text-white shadow-sm'
@@ -281,17 +334,22 @@ export default function Dashboard() {
       </header>
 
       {/* Content */}
-      <main className="max-w-5xl mx-auto px-4 py-6">
+      <main ref={mainRef} className="max-w-5xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
         {/* Section header */}
         {activeSection !== 'about' && (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
+          <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 mb-3 sm:mb-4">
             {sectionDescriptions[activeSection]}
+            {activeSection === 'discover' && (
+              <span className="text-zinc-400 ml-1 hidden sm:inline">
+                — swipe right to save, left to hide
+              </span>
+            )}
           </p>
         )}
 
-        {/* Search + Filters (for discover, saved, hidden) */}
+        {/* Search + Filters */}
         {['discover', 'saved', 'hidden'].includes(activeSection) && (
-          <div className="space-y-3 mb-6">
+          <div className="space-y-2 sm:space-y-3 mb-4 sm:mb-6">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
               <input
@@ -299,47 +357,49 @@ export default function Dashboard() {
                 placeholder="Search events, topics, venues..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-zinc-100 dark:bg-zinc-800 border-0 rounded-xl text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full pl-10 pr-4 py-2 sm:py-2.5 bg-zinc-100 dark:bg-zinc-800 border-0 rounded-xl text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
-            <InterestFilter
-              interests={interests}
-              activeFilter={activeFilter}
-              onFilterChange={setActiveFilter}
-            />
+            <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0 scrollbar-hide">
+              <InterestFilter
+                interests={interests}
+                activeFilter={activeFilter}
+                onFilterChange={setActiveFilter}
+              />
+            </div>
           </div>
         )}
 
         {/* Upcoming section controls */}
         {activeSection === 'upcoming' && (
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-6">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-zinc-500">Show:</span>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <span className="text-xs sm:text-sm text-zinc-500">Show:</span>
               {[
-                { days: 7, label: 'This Week' },
+                { days: 7, label: 'Week' },
                 { days: 14, label: '2 Weeks' },
-                { days: 30, label: 'This Month' },
+                { days: 30, label: 'Month' },
               ].map(opt => (
                 <button
                   key={opt.days}
                   onClick={() => setUpcomingDays(opt.days)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                  className={`px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                     upcomingDays === opt.days
                       ? 'bg-indigo-600 text-white'
-                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200'
                   }`}
                 >
                   {opt.label}
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-1 sm:ml-auto">
+            <div className="flex items-center gap-1 ml-auto">
               <button
                 onClick={() => setUpcomingView('timeline')}
-                className={`p-2 rounded-lg transition-all ${
+                className={`p-1.5 sm:p-2 rounded-lg transition-all ${
                   upcomingView === 'timeline'
                     ? 'bg-indigo-600 text-white'
-                    : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+                    : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'
                 }`}
                 title="Timeline view"
               >
@@ -347,10 +407,10 @@ export default function Dashboard() {
               </button>
               <button
                 onClick={() => setUpcomingView('map')}
-                className={`p-2 rounded-lg transition-all ${
+                className={`p-1.5 sm:p-2 rounded-lg transition-all ${
                   upcomingView === 'map'
                     ? 'bg-indigo-600 text-white'
-                    : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+                    : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'
                 }`}
                 title="Map view"
               >
@@ -366,9 +426,9 @@ export default function Dashboard() {
         ) : activeSection === 'stats' ? (
           <StatsSection />
         ) : loading ? (
-          <div className="flex flex-col items-center justify-center py-20">
-            <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-4" />
-            <p className="text-sm text-zinc-500">Loading events...</p>
+          <div className="flex flex-col items-center justify-center py-16 sm:py-20">
+            <Loader2 className="w-7 h-7 sm:w-8 sm:h-8 text-indigo-500 animate-spin mb-3 sm:mb-4" />
+            <p className="text-xs sm:text-sm text-zinc-500">Loading events...</p>
           </div>
         ) : events.length === 0 ? (
           <EmptyState
@@ -377,10 +437,10 @@ export default function Dashboard() {
             scraping={scraping}
           />
         ) : activeSection === 'upcoming' ? (
-          <div className="space-y-6">
+          <div className="space-y-4 sm:space-y-6">
             {upcomingView === 'map' ? (
               <Suspense fallback={
-                <div className="w-full h-[400px] md:h-[500px] rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+                <div className="w-full h-[300px] sm:h-[400px] md:h-[500px] landscape:h-[50vh] rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
                   <Loader2 className="w-6 h-6 text-indigo-500 animate-spin" />
                 </div>
               }>
@@ -393,34 +453,52 @@ export default function Dashboard() {
         ) : (
           <>
             {/* Stats bar */}
-            <div className="flex items-center gap-4 mb-4 text-sm text-zinc-500 dark:text-zinc-400">
+            <div className="flex items-center gap-3 sm:gap-4 mb-3 sm:mb-4 text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
               <span className="flex items-center gap-1">
-                <CalendarDays className="w-4 h-4" />
+                <CalendarDays className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                 {groupedEvents.length} event{groupedEvents.length !== 1 ? 's' : ''}
                 {groupedEvents.length !== events.length && (
-                  <span className="text-xs text-zinc-400 ml-1">
-                    ({events.length - groupedEvents.length} duplicates merged)
+                  <span className="text-[10px] sm:text-xs text-zinc-400 ml-1">
+                    ({events.length - groupedEvents.length} merged)
                   </span>
                 )}
               </span>
               <span className="flex items-center gap-1">
-                <MapPin className="w-4 h-4" />
-                London & Online
+                <MapPin className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                London
               </span>
             </div>
 
-            {/* Event grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Event grid — swipeable on mobile in discover mode */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
               {groupedEvents.map((group) => (
-                <EventCard
-                  key={group.primary.id}
-                  event={group.primary}
-                  onSave={handleSave}
-                  onHide={handleHide}
-                  onRestore={handleRestore}
-                  variant={activeSection as 'discover' | 'saved' | 'hidden'}
-                  duplicateSources={group.sources.length > 1 ? group.sources : undefined}
-                />
+                activeSection === 'discover' ? (
+                  <SwipeableCard
+                    key={group.primary.id}
+                    onSwipeRight={() => handleSave(group.primary.id)}
+                    onSwipeLeft={() => handleHide(group.primary.id)}
+                    enabled={true}
+                  >
+                    <EventCard
+                      event={group.primary}
+                      onSave={handleSave}
+                      onHide={handleHide}
+                      onRestore={handleRestore}
+                      variant="discover"
+                      duplicateSources={group.sources.length > 1 ? group.sources : undefined}
+                    />
+                  </SwipeableCard>
+                ) : (
+                  <EventCard
+                    key={group.primary.id}
+                    event={group.primary}
+                    onSave={handleSave}
+                    onHide={handleHide}
+                    onRestore={handleRestore}
+                    variant={activeSection as 'saved' | 'hidden'}
+                    duplicateSources={group.sources.length > 1 ? group.sources : undefined}
+                  />
+                )
               ))}
             </div>
           </>
@@ -428,8 +506,8 @@ export default function Dashboard() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-zinc-200 dark:border-zinc-800 py-6 mt-12">
-        <div className="max-w-5xl mx-auto px-4 text-center text-xs text-zinc-400 dark:text-zinc-600">
+      <footer className="border-t border-zinc-200 dark:border-zinc-800 py-4 sm:py-6 mt-8 sm:mt-12">
+        <div className="max-w-5xl mx-auto px-3 sm:px-4 text-center text-[10px] sm:text-xs text-zinc-400 dark:text-zinc-600">
           <p>
             Events for Christian scrapes 30+ London event sources daily.
           </p>
@@ -438,6 +516,14 @@ export default function Dashboard() {
           </p>
         </div>
       </footer>
+
+      {/* Mobile bottom navigation */}
+      <BottomNav
+        activeSection={activeSection}
+        onSectionChange={handleSectionChange}
+        savedCount={savedCount}
+        hiddenCount={hiddenCount}
+      />
     </div>
   );
 }
@@ -445,25 +531,25 @@ export default function Dashboard() {
 function EmptyState({ section, onScrape, scraping }: { section: Section; onScrape: () => void; scraping: boolean }) {
   const config: Record<string, { icon: React.ReactNode; title: string; desc: string; showScrape: boolean }> = {
     discover: {
-      icon: <Compass className="w-12 h-12 text-zinc-300 dark:text-zinc-700" />,
+      icon: <Compass className="w-10 h-10 sm:w-12 sm:h-12 text-zinc-300 dark:text-zinc-700" />,
       title: 'No new events to judge',
       desc: 'You\'ve reviewed all available events. Hit Refresh to scrape for more, or check back tomorrow.',
       showScrape: true,
     },
     saved: {
-      icon: <Bookmark className="w-12 h-12 text-zinc-300 dark:text-zinc-700" />,
+      icon: <Bookmark className="w-10 h-10 sm:w-12 sm:h-12 text-zinc-300 dark:text-zinc-700" />,
       title: 'No saved events',
       desc: 'Save events from Discover by clicking the bookmark icon. They\'ll appear here.',
       showScrape: false,
     },
     hidden: {
-      icon: <EyeOff className="w-12 h-12 text-zinc-300 dark:text-zinc-700" />,
+      icon: <EyeOff className="w-10 h-10 sm:w-12 sm:h-12 text-zinc-300 dark:text-zinc-700" />,
       title: 'No hidden events',
       desc: 'Events you dismiss will appear here. You can restore them at any time.',
       showScrape: false,
     },
     upcoming: {
-      icon: <CalendarCheck className="w-12 h-12 text-zinc-300 dark:text-zinc-700" />,
+      icon: <CalendarCheck className="w-10 h-10 sm:w-12 sm:h-12 text-zinc-300 dark:text-zinc-700" />,
       title: 'No upcoming events',
       desc: 'Save events from Discover — your upcoming ones will appear here on a timeline and map.',
       showScrape: false,
@@ -473,12 +559,12 @@ function EmptyState({ section, onScrape, scraping }: { section: Section; onScrap
   const c = config[section] || config.discover;
 
   return (
-    <div className="flex flex-col items-center justify-center py-20">
+    <div className="flex flex-col items-center justify-center py-16 sm:py-20">
       {c.icon}
-      <h3 className="text-lg font-semibold text-zinc-600 dark:text-zinc-400 mb-2 mt-4">
+      <h3 className="text-base sm:text-lg font-semibold text-zinc-600 dark:text-zinc-400 mb-2 mt-3 sm:mt-4">
         {c.title}
       </h3>
-      <p className="text-sm text-zinc-500 dark:text-zinc-500 mb-4 text-center max-w-sm">
+      <p className="text-xs sm:text-sm text-zinc-500 mb-4 text-center max-w-sm px-4">
         {c.desc}
       </p>
       {c.showScrape && (
