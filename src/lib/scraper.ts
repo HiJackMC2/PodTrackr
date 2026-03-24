@@ -523,16 +523,15 @@ export async function scrapeAllSources(): Promise<{ total: number; errors: strin
   let total = 0;
   const errors: string[] = [];
   const startTime = Date.now();
-  const MAX_SCRAPE_TIME = 40000; // 40s for scraping, leaves 20s for DB inserts
+  const MAX_TIME = 50000; // 50s total budget (Vercel has 60s limit)
 
   // Scrape all sources concurrently in large batches
   const BATCH_SIZE = 20;
   const allResults: { source: Source; events: ParsedEvent[]; error?: string }[] = [];
 
   for (let i = 0; i < sources.length; i += BATCH_SIZE) {
-    // Check if we're running out of time
-    if (Date.now() - startTime > MAX_SCRAPE_TIME) {
-      errors.push(`Time limit reached after ${Math.round((Date.now() - startTime) / 1000)}s — scraped ${i}/${sources.length} sources`);
+    if (Date.now() - startTime > MAX_TIME * 0.6) {
+      errors.push(`Time limit: scraped ${i}/${sources.length} sources in ${Math.round((Date.now() - startTime) / 1000)}s`);
       break;
     }
 
@@ -546,62 +545,100 @@ export async function scrapeAllSources(): Promise<{ total: number; errors: strin
     allResults.push(...results);
   }
 
-  // Insert events into DB
+  // Collect all events to insert, grouped by source
+  const allEventsToInsert: {
+    source_id: string;
+    title: string;
+    description: string | null;
+    date: string | null;
+    end_date: string | null;
+    location: string | null;
+    city: string;
+    url: string;
+    is_free: boolean;
+    is_online: boolean;
+    external_id: string;
+    updated_at: string;
+  }[] = [];
+
+  const scrapedSourceIds: string[] = [];
+
   for (const { source, events: parsedEvents, error: scrapeError } of allResults) {
     if (scrapeError) {
       errors.push(scrapeError);
       continue;
     }
+    scrapedSourceIds.push(source.id);
 
     for (const event of parsedEvents) {
+      allEventsToInsert.push({
+        source_id: source.id,
+        title: event.title,
+        description: event.description,
+        date: event.date,
+        end_date: event.end_date || null,
+        location: event.location,
+        city: event.is_online ? 'Online' : 'London',
+        url: event.url,
+        is_free: event.is_free || false,
+        is_online: event.is_online || false,
+        external_id: event.external_id || event.url,
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Batch upsert all events at once (much faster than individual inserts)
+  if (allEventsToInsert.length > 0) {
+    const DB_BATCH_SIZE = 50;
+    for (let i = 0; i < allEventsToInsert.length; i += DB_BATCH_SIZE) {
+      if (Date.now() - startTime > MAX_TIME) {
+        errors.push(`DB time limit: inserted ${i}/${allEventsToInsert.length} events`);
+        break;
+      }
+
+      const batch = allEventsToInsert.slice(i, i + DB_BATCH_SIZE);
       const { data: inserted, error } = await supabase
         .from('events')
-        .upsert(
-          {
-            source_id: source.id,
-            title: event.title,
-            description: event.description,
-            date: event.date,
-            end_date: event.end_date || null,
-            location: event.location,
-            city: event.is_online ? 'Online' : 'London',
-            url: event.url,
-            is_free: event.is_free || false,
-            is_online: event.is_online || false,
-            external_id: event.external_id || event.url,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'source_id,external_id' }
-        )
-        .select()
-        .single();
+        .upsert(batch, { onConflict: 'source_id,external_id' })
+        .select('id, title, description');
 
       if (error) {
-        errors.push(`Event "${event.title}": ${error.message}`);
+        errors.push(`Batch insert error: ${error.message}`);
         continue;
       }
 
       if (inserted) {
-        const matchedSlugs = matchInterests(event.title, event.description);
-        const interestIds = matchedSlugs
-          .map(slug => interestMap.get(slug))
-          .filter(Boolean) as string[];
+        total += inserted.length;
 
-        if (interestIds.length > 0) {
+        // Batch match interests for all inserted events
+        const interestRows: { event_id: string; interest_id: string }[] = [];
+        for (const evt of inserted) {
+          const matchedSlugs = matchInterests(evt.title, evt.description);
+          const interestIds = matchedSlugs
+            .map(slug => interestMap.get(slug))
+            .filter(Boolean) as string[];
+          for (const iid of interestIds) {
+            interestRows.push({ event_id: evt.id, interest_id: iid });
+          }
+        }
+
+        if (interestRows.length > 0) {
           await supabase.from('event_interests').upsert(
-            interestIds.map(iid => ({ event_id: inserted.id, interest_id: iid })),
+            interestRows,
             { onConflict: 'event_id,interest_id' }
           );
         }
-
-        total++;
       }
     }
+  }
 
+  // Update last_scraped_at for all scraped sources in one batch
+  if (scrapedSourceIds.length > 0) {
     await supabase
       .from('sources')
       .update({ last_scraped_at: new Date().toISOString() })
-      .eq('id', source.id);
+      .in('id', scrapedSourceIds);
   }
 
   return { total, errors };
