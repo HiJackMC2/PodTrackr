@@ -77,6 +77,52 @@ function estimateTravelMinutes(
   return Math.round((km / speeds[mode]) * 60);
 }
 
+// Guess coordinates for known London venues (same logic as EventMap)
+function getEventCoords(event: Event): { lat: number; lng: number } | null {
+  if (event.latitude && event.longitude) {
+    return { lat: event.latitude, lng: event.longitude };
+  }
+
+  const loc = (event.location || '').toLowerCase();
+  const source = (event.source as { name?: string } | undefined)?.name?.toLowerCase() || '';
+  const combined = `${loc} ${event.title.toLowerCase()} ${source}`;
+
+  const venues: Record<string, { lat: number; lng: number }> = {
+    'lse': { lat: 51.5144, lng: -0.1165 },
+    'london school of economics': { lat: 51.5144, lng: -0.1165 },
+    'ucl': { lat: 51.5246, lng: -0.1340 },
+    'kings college': { lat: 51.5115, lng: -0.1160 },
+    "king's college": { lat: 51.5115, lng: -0.1160 },
+    'chatham house': { lat: 51.5074, lng: -0.1416 },
+    'rsa': { lat: 51.5093, lng: -0.1225 },
+    'british academy': { lat: 51.5082, lng: -0.1378 },
+    'conway hall': { lat: 51.5226, lng: -0.1200 },
+    'gresham college': { lat: 51.5155, lng: -0.0924 },
+    'royal institution': { lat: 51.5095, lng: -0.1428 },
+    'southbank centre': { lat: 51.5073, lng: -0.1163 },
+    'institute for government': { lat: 51.5020, lng: -0.1299 },
+    'rusi': { lat: 51.5073, lng: -0.1280 },
+    'wellcome collection': { lat: 51.5259, lng: -0.1338 },
+    'british library': { lat: 51.5299, lng: -0.1273 },
+    'barbican': { lat: 51.5200, lng: -0.0938 },
+    'science museum': { lat: 51.4978, lng: -0.1745 },
+    'royal society': { lat: 51.5061, lng: -0.1318 },
+    'policy exchange': { lat: 51.5074, lng: -0.1318 },
+    'frontline club': { lat: 51.5173, lng: -0.1757 },
+    'soas': { lat: 51.5222, lng: -0.1293 },
+    'imperial college': { lat: 51.4988, lng: -0.1749 },
+  };
+
+  for (const [keyword, coords] of Object.entries(venues)) {
+    if (combined.includes(keyword)) return coords;
+  }
+
+  if (event.is_online) return null;
+
+  // Default to central London
+  return { lat: 51.5074, lng: -0.1278 };
+}
+
 export default function TravelTime({ event }: TravelTimeProps) {
   const [addresses, setAddresses] = useState<SavedAddress[]>([]);
   const [selectedAddress, setSelectedAddress] = useState<SavedAddress | null>(null);
@@ -143,7 +189,10 @@ export default function TravelTime({ event }: TravelTimeProps) {
     fetchAddresses();
   }
 
-  if (!event.latitude || !event.longitude) {
+  // Try to resolve event coordinates from DB or venue name guessing
+  const eventCoords = getEventCoords(event);
+
+  if (!eventCoords) {
     return (
       <div className="text-xs text-zinc-400 italic">
         No location coordinates available for directions.
@@ -152,11 +201,11 @@ export default function TravelTime({ event }: TravelTimeProps) {
   }
 
   const estimate = selectedAddress
-    ? estimateTravelMinutes(selectedAddress.latitude, selectedAddress.longitude, event.latitude, event.longitude, selectedMode)
+    ? estimateTravelMinutes(selectedAddress.latitude, selectedAddress.longitude, eventCoords.lat, eventCoords.lng, selectedMode)
     : null;
 
   const mapsUrl = selectedAddress
-    ? buildGoogleMapsUrl(selectedAddress.latitude, selectedAddress.longitude, event.latitude, event.longitude, selectedMode)
+    ? buildGoogleMapsUrl(selectedAddress.latitude, selectedAddress.longitude, eventCoords.lat, eventCoords.lng, selectedMode)
     : null;
 
   return (
