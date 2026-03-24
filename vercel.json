@@ -1,0 +1,15 @@
+{
+  "buildCommand": "cd event-radar && npm install && npm run build",
+  "outputDirectory": "event-radar/.next",
+  "framework": "nextjs",
+  "crons": [
+    {
+      "path": "/api/scrape",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/email",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}
