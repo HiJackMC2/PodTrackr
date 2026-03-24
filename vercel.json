@@ -1,7 +1,4 @@
 {
-  "buildCommand": "cd event-radar && npm install && npm run build",
-  "outputDirectory": "event-radar/.next",
-  "framework": "nextjs",
   "crons": [
     {
       "path": "/api/scrape",
