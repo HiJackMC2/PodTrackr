@@ -567,7 +567,7 @@ export default function Dashboard() {
       <footer className="border-t border-zinc-200 dark:border-zinc-800 py-4 sm:py-6 mt-8 sm:mt-12">
         <div className="max-w-5xl mx-auto px-3 sm:px-4 text-center text-[10px] sm:text-xs text-zinc-400 dark:text-zinc-600">
           <p>
-            Events for Christian scrapes 30+ London event sources daily.
+            Events for Christian scrapes 60+ London event sources daily.
           </p>
           <p className="mt-1">
             No AI tokens used — events are matched using keyword-based interest tagging.

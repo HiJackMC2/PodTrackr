@@ -100,11 +100,12 @@ export async function PATCH(request: NextRequest) {
   }
 
   // Check if there's an existing action
-  const { data: existing } = await supabase
+  const { data: existingRows } = await supabase
     .from('event_actions')
     .select('*')
     .eq('event_id', event_id)
-    .single();
+    .limit(1);
+  const existing = existingRows?.[0] || null;
 
   if (existing) {
     // If same action, remove it (toggle off)

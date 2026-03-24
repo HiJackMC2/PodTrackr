@@ -223,7 +223,7 @@ function scrapeGenericHTML(
   const seen = new Set<string>();
 
   // Try to find event links using configured selectors
-  const linkSelector = selectors?.link || 'a[href*="event"], a[href*="lecture"], a[href*="seminar"], a[href*="talk"]';
+  const linkSelector = selectors?.link || 'a[href*="event"], a[href*="lecture"], a[href*="seminar"], a[href*="talk"], a[href*="whats-on"]';
 
   $(linkSelector).each((_, el) => {
     const $el = $(el);
@@ -248,11 +248,23 @@ function scrapeGenericHTML(
     if (timeEl.length) {
       dateStr = timeEl.attr('datetime') || timeEl.text().trim();
     }
-    // Then look for date patterns in text
+    // Then look for date patterns in text (long months)
     if (!dateStr) {
       const parentText = parent.text();
       const dateMatch = parentText.match(/(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i);
       if (dateMatch) dateStr = dateMatch[1];
+    }
+    // Short month format: "25 Mar 2026" or "Mar 25, 2026"
+    if (!dateStr) {
+      const parentText = parent.text();
+      const shortMatch = parentText.match(/(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4})/i);
+      if (shortMatch) dateStr = shortMatch[1];
+    }
+    // Short month without year: "25 Mar" or "Tue 25 Mar"
+    if (!dateStr) {
+      const parentText = parent.text();
+      const noYearMatch = parentText.match(/(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))\b/i);
+      if (noYearMatch) dateStr = noYearMatch[1];
     }
     // Try ISO-ish dates
     if (!dateStr) {
@@ -488,9 +500,17 @@ export async function scrapeAllSources(): Promise<{ total: number; errors: strin
       });
 
       // Filter London-only (or online)
+      // Most of our sources are London-based, so we're permissive here —
+      // only exclude events that explicitly mention non-London UK cities
+      const NON_LONDON_CITIES = ['manchester', 'birmingham', 'edinburgh', 'glasgow', 'cardiff', 'bristol', 'leeds', 'liverpool', 'sheffield', 'newcastle', 'nottingham', 'belfast', 'oxford', 'cambridge'];
       parsedEvents = parsedEvents.filter(e => {
         const loc = (e.location || '').toLowerCase();
-        return loc.includes('london') || loc === '' || e.is_online || loc.includes('online');
+        if (e.is_online || loc.includes('online')) return true;
+        if (loc === '' || loc === 'london' || loc.includes('london')) return true;
+        // Exclude if explicitly in another city
+        if (NON_LONDON_CITIES.some(city => loc.includes(city))) return false;
+        // Otherwise assume London (our sources are London-centric)
+        return true;
       });
 
       for (const event of parsedEvents) {
@@ -593,21 +613,49 @@ function decodeHTML(text: string): string {
     .replace(/&laquo;/g, '«');
 }
 
+const MONTHS = 'January|February|March|April|May|June|July|August|September|October|November|December';
+const SHORT_MONTHS = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec';
+const ALL_MONTHS = `${MONTHS}|${SHORT_MONTHS}`;
+
 function parseFlexibleDate(dateStr: string): string | null {
   try {
+    // Try native parse first (handles ISO dates, RFC dates etc.)
     const d = new Date(dateStr);
     if (!isNaN(d.getTime()) && d.getFullYear() > 2020) return d.toISOString();
 
-    const ukMatch = dateStr.match(/(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i);
+    // UK format: "25 March 2026" or "25 Mar 2026"
+    const ukMatch = dateStr.match(new RegExp(`(\\d{1,2})\\s+(${ALL_MONTHS})\\s+(\\d{4})`, 'i'));
     if (ukMatch) {
       const d2 = new Date(`${ukMatch[2]} ${ukMatch[1]}, ${ukMatch[3]}`);
       if (!isNaN(d2.getTime())) return d2.toISOString();
     }
 
-    const withTime = dateStr.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})/i);
-    if (withTime) {
-      const d3 = new Date(`${withTime[1]} ${withTime[2]}, ${withTime[3]}`);
+    // US format: "March 25, 2026" or "Mar 25, 2026"
+    const usMatch = dateStr.match(new RegExp(`(${ALL_MONTHS})\\s+(\\d{1,2}),?\\s+(\\d{4})`, 'i'));
+    if (usMatch) {
+      const d3 = new Date(`${usMatch[1]} ${usMatch[2]}, ${usMatch[3]}`);
       if (!isNaN(d3.getTime())) return d3.toISOString();
+    }
+
+    // UK short: "25/03/2026" or "25-03-2026" (day/month/year)
+    const ukShort = dateStr.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    if (ukShort) {
+      const d4 = new Date(`${ukShort[3]}-${ukShort[2].padStart(2, '0')}-${ukShort[1].padStart(2, '0')}`);
+      if (!isNaN(d4.getTime()) && d4.getFullYear() > 2020) return d4.toISOString();
+    }
+
+    // Day Month (no year, assume current/next): "25 March" or "Wed 25 Mar"
+    const noYear = dateStr.match(new RegExp(`(\\d{1,2})\\s+(${ALL_MONTHS})`, 'i'));
+    if (noYear) {
+      const now = new Date();
+      let year = now.getFullYear();
+      const d5 = new Date(`${noYear[2]} ${noYear[1]}, ${year}`);
+      if (!isNaN(d5.getTime())) {
+        if (d5 < now) {
+          d5.setFullYear(year + 1);
+        }
+        return d5.toISOString();
+      }
     }
 
     return null;
