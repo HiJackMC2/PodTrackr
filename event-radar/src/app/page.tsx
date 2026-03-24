@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Event, Interest } from '@/lib/supabase';
 import EventCard from '@/components/EventCard';
 import InterestFilter from '@/components/InterestFilter';
 import UpcomingTimeline from '@/components/UpcomingTimeline';
 import AboutSection from '@/components/AboutSection';
+import StatsSection from '@/components/StatsSection';
+import { groupDuplicateEvents, type EventGroup } from '@/lib/event-grouping';
 import {
   Radar,
   Search,
@@ -22,11 +24,12 @@ import {
   Info,
   Map as MapIcon,
   List,
+  BarChart3,
 } from 'lucide-react';
 
 const EventMap = lazy(() => import('@/components/EventMap'));
 
-type Section = 'discover' | 'saved' | 'hidden' | 'upcoming' | 'about';
+type Section = 'discover' | 'saved' | 'hidden' | 'upcoming' | 'stats' | 'about';
 
 export default function Dashboard() {
   const [events, setEvents] = useState<Event[]>([]);
@@ -51,7 +54,6 @@ export default function Dashboard() {
       if (activeFilter !== 'all') params.set('interest', activeFilter);
       if (searchQuery) params.set('search', searchQuery);
 
-      // Section-specific params
       if (activeSection === 'saved') {
         params.set('saved', 'true');
       } else if (activeSection === 'hidden') {
@@ -111,10 +113,18 @@ export default function Dashboard() {
   }, [fetchCounts]);
 
   useEffect(() => {
-    if (activeSection !== 'about') {
+    if (activeSection !== 'about' && activeSection !== 'stats') {
       fetchEvents();
     }
   }, [fetchEvents, activeSection]);
+
+  // Smart event grouping — deduplicate events from different sources
+  const groupedEvents: EventGroup[] = useMemo(() => {
+    if (activeSection === 'discover') {
+      return groupDuplicateEvents(events);
+    }
+    return events.map(e => ({ primary: e, duplicates: [], sources: [(e.source as { name: string } | undefined)?.name || 'Unknown'] }));
+  }, [events, activeSection]);
 
   const handleAction = async (eventId: string, action: 'saved' | 'hidden') => {
     await fetch('/api/events', {
@@ -126,10 +136,27 @@ export default function Dashboard() {
     fetchCounts();
   };
 
-  const handleSave = (eventId: string) => handleAction(eventId, 'saved');
-  const handleHide = (eventId: string) => handleAction(eventId, 'hidden');
+  const handleSave = async (eventId: string) => {
+    // For grouped events, also save duplicates
+    const group = groupedEvents.find(g => g.primary.id === eventId);
+    await handleAction(eventId, 'saved');
+    if (group) {
+      for (const dup of group.duplicates) {
+        await handleAction(dup.id, 'saved');
+      }
+    }
+  };
 
-  // Restore = remove the hidden action (toggle it off), which the API handles
+  const handleHide = async (eventId: string) => {
+    const group = groupedEvents.find(g => g.primary.id === eventId);
+    await handleAction(eventId, 'hidden');
+    if (group) {
+      for (const dup of group.duplicates) {
+        await handleAction(dup.id, 'hidden');
+      }
+    }
+  };
+
   const handleRestore = async (eventId: string) => {
     await fetch('/api/events', {
       method: 'PATCH',
@@ -159,8 +186,9 @@ export default function Dashboard() {
   const NAV_ITEMS: { id: Section; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'discover', label: 'Discover', icon: <Compass className="w-4 h-4" /> },
     { id: 'saved', label: 'Saved', icon: <Bookmark className="w-4 h-4" />, count: savedCount },
-    { id: 'upcoming', label: 'Upcoming', icon: <CalendarCheck className="w-4 h-4" />, count: savedCount },
+    { id: 'upcoming', label: 'Upcoming', icon: <CalendarCheck className="w-4 h-4" /> },
     { id: 'hidden', label: 'Hidden', icon: <EyeOff className="w-4 h-4" />, count: hiddenCount },
+    { id: 'stats', label: 'Stats', icon: <BarChart3 className="w-4 h-4" /> },
     { id: 'about', label: 'About', icon: <Info className="w-4 h-4" /> },
   ];
 
@@ -169,6 +197,7 @@ export default function Dashboard() {
     saved: 'Events you\'ve bookmarked',
     hidden: 'Events you\'ve dismissed',
     upcoming: 'Your saved events on a timeline & map',
+    stats: 'Your event discovery at a glance',
     about: 'Sources, methodology & how it works',
   };
 
@@ -304,7 +333,7 @@ export default function Dashboard() {
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-1 ml-auto">
+            <div className="flex items-center gap-1 sm:ml-auto">
               <button
                 onClick={() => setUpcomingView('timeline')}
                 className={`p-2 rounded-lg transition-all ${
@@ -334,6 +363,8 @@ export default function Dashboard() {
         {/* Section content */}
         {activeSection === 'about' ? (
           <AboutSection />
+        ) : activeSection === 'stats' ? (
+          <StatsSection />
         ) : loading ? (
           <div className="flex flex-col items-center justify-center py-20">
             <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-4" />
@@ -365,7 +396,12 @@ export default function Dashboard() {
             <div className="flex items-center gap-4 mb-4 text-sm text-zinc-500 dark:text-zinc-400">
               <span className="flex items-center gap-1">
                 <CalendarDays className="w-4 h-4" />
-                {events.length} event{events.length !== 1 ? 's' : ''}
+                {groupedEvents.length} event{groupedEvents.length !== 1 ? 's' : ''}
+                {groupedEvents.length !== events.length && (
+                  <span className="text-xs text-zinc-400 ml-1">
+                    ({events.length - groupedEvents.length} duplicates merged)
+                  </span>
+                )}
               </span>
               <span className="flex items-center gap-1">
                 <MapPin className="w-4 h-4" />
@@ -375,14 +411,15 @@ export default function Dashboard() {
 
             {/* Event grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {events.map((event) => (
+              {groupedEvents.map((group) => (
                 <EventCard
-                  key={event.id}
-                  event={event}
+                  key={group.primary.id}
+                  event={group.primary}
                   onSave={handleSave}
                   onHide={handleHide}
                   onRestore={handleRestore}
                   variant={activeSection as 'discover' | 'saved' | 'hidden'}
+                  duplicateSources={group.sources.length > 1 ? group.sources : undefined}
                 />
               ))}
             </div>
@@ -394,7 +431,7 @@ export default function Dashboard() {
       <footer className="border-t border-zinc-200 dark:border-zinc-800 py-6 mt-12">
         <div className="max-w-5xl mx-auto px-4 text-center text-xs text-zinc-400 dark:text-zinc-600">
           <p>
-            Events for Christian scrapes {interests.length > 0 ? '30+' : ''} London event sources daily.
+            Events for Christian scrapes 30+ London event sources daily.
           </p>
           <p className="mt-1">
             No AI tokens used — events are matched using keyword-based interest tagging.
@@ -406,7 +443,7 @@ export default function Dashboard() {
 }
 
 function EmptyState({ section, onScrape, scraping }: { section: Section; onScrape: () => void; scraping: boolean }) {
-  const config: Record<Section, { icon: React.ReactNode; title: string; desc: string; showScrape: boolean }> = {
+  const config: Record<string, { icon: React.ReactNode; title: string; desc: string; showScrape: boolean }> = {
     discover: {
       icon: <Compass className="w-12 h-12 text-zinc-300 dark:text-zinc-700" />,
       title: 'No new events to judge',
@@ -431,10 +468,9 @@ function EmptyState({ section, onScrape, scraping }: { section: Section; onScrap
       desc: 'Save events from Discover — your upcoming ones will appear here on a timeline and map.',
       showScrape: false,
     },
-    about: { icon: null, title: '', desc: '', showScrape: false },
   };
 
-  const c = config[section];
+  const c = config[section] || config.discover;
 
   return (
     <div className="flex flex-col items-center justify-center py-20">

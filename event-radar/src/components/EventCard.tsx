@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import {
   Bookmark,
   BookmarkCheck,
@@ -11,8 +12,15 @@ import {
   Globe,
   Tag,
   RotateCcw,
+  CalendarPlus,
+  Navigation,
+  ChevronDown,
+  ChevronUp,
+  Layers,
 } from 'lucide-react';
 import type { Event, Interest } from '@/lib/supabase';
+import { downloadICS, generateGoogleCalendarUrl } from '@/lib/calendar';
+import TravelTime from './TravelTime';
 
 type EventCardProps = {
   event: Event;
@@ -20,6 +28,7 @@ type EventCardProps = {
   onHide: (eventId: string) => void;
   onRestore?: (eventId: string) => void;
   variant?: 'discover' | 'saved' | 'hidden' | 'upcoming';
+  duplicateSources?: string[];
 };
 
 function formatDate(dateStr: string) {
@@ -58,18 +67,28 @@ function urgencyColor(dateStr: string) {
   return 'text-indigo-600 dark:text-indigo-400';
 }
 
-export default function EventCard({ event, onSave, onHide, onRestore, variant = 'discover' }: EventCardProps) {
+export default function EventCard({ event, onSave, onHide, onRestore, variant = 'discover', duplicateSources }: EventCardProps) {
   const isSaved = event.action === 'saved';
   const interests = (event.interests || []) as Interest[];
   const sourceName = (event.source as { name: string } | undefined)?.name || 'Unknown';
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [showTravel, setShowTravel] = useState(false);
 
   return (
     <div className="group relative bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 hover:shadow-lg hover:border-zinc-300 dark:hover:border-zinc-700 transition-all duration-200">
       {/* Top bar: source + timing */}
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide truncate mr-2">
-          {sourceName}
-        </span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide truncate">
+            {sourceName}
+          </span>
+          {duplicateSources && duplicateSources.length > 1 && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" title={`Also found on: ${duplicateSources.filter(s => s !== sourceName).join(', ')}`}>
+              <Layers className="w-2.5 h-2.5" />
+              {duplicateSources.length}
+            </span>
+          )}
+        </div>
         <span className={`text-xs font-semibold whitespace-nowrap ${urgencyColor(event.date)}`}>
           {daysUntil(event.date)}
         </span>
@@ -146,6 +165,34 @@ export default function EventCard({ event, onSave, onHide, onRestore, variant = 
           View & Sign Up
         </a>
 
+        {/* Add to Calendar */}
+        <button
+          onClick={() => setShowCalendar(!showCalendar)}
+          className={`p-2 rounded-lg border transition-colors ${
+            showCalendar
+              ? 'bg-green-50 border-green-200 text-green-600 dark:bg-green-900/20 dark:border-green-800 dark:text-green-400'
+              : 'border-zinc-200 text-zinc-400 hover:text-green-500 hover:border-green-200 dark:border-zinc-700'
+          }`}
+          title="Add to calendar"
+        >
+          <CalendarPlus className="w-4 h-4" />
+        </button>
+
+        {/* Travel directions (only for saved/upcoming, non-online events) */}
+        {(variant === 'saved' || variant === 'upcoming') && !event.is_online && (
+          <button
+            onClick={() => setShowTravel(!showTravel)}
+            className={`p-2 rounded-lg border transition-colors ${
+              showTravel
+                ? 'bg-blue-50 border-blue-200 text-blue-600 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400'
+                : 'border-zinc-200 text-zinc-400 hover:text-blue-500 hover:border-blue-200 dark:border-zinc-700'
+            }`}
+            title="Get directions"
+          >
+            <Navigation className="w-4 h-4" />
+          </button>
+        )}
+
         {variant === 'hidden' ? (
           <button
             onClick={() => onRestore?.(event.id)}
@@ -179,6 +226,37 @@ export default function EventCard({ event, onSave, onHide, onRestore, variant = 
           </>
         )}
       </div>
+
+      {/* Calendar dropdown */}
+      {showCalendar && (
+        <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
+          <div className="flex gap-2">
+            <a
+              href={generateGoogleCalendarUrl(event)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              Google Calendar
+            </a>
+            <button
+              onClick={() => downloadICS(event)}
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors"
+            >
+              <CalendarPlus className="w-3.5 h-3.5" />
+              Download .ics
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Travel time panel */}
+      {showTravel && (
+        <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+          <TravelTime event={event} />
+        </div>
+      )}
     </div>
   );
 }

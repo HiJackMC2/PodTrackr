@@ -166,9 +166,25 @@ ALTER TABLE events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE event_interests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE event_actions ENABLE ROW LEVEL SECURITY;
 
+-- Saved addresses for travel time feature
+CREATE TABLE IF NOT EXISTS saved_addresses (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  label TEXT NOT NULL,
+  address TEXT NOT NULL,
+  latitude DOUBLE PRECISION NOT NULL,
+  longitude DOUBLE PRECISION NOT NULL,
+  is_default BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_addresses_default ON saved_addresses(is_default);
+
+ALTER TABLE saved_addresses ENABLE ROW LEVEL SECURITY;
+
 -- Policies: allow all for anon (single-user app)
 CREATE POLICY "Allow all on sources" ON sources FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on interests" ON interests FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on events" ON events FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on event_interests" ON event_interests FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all on event_actions" ON event_actions FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all on saved_addresses" ON saved_addresses FOR ALL USING (true) WITH CHECK (true);
