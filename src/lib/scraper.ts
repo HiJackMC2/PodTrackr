@@ -273,6 +273,11 @@ function scrapeGenericHTML(
       const isoMatch = parentText.match(/(\d{4}-\d{2}-\d{2})/);
       if (isoMatch) dateStr = isoMatch[1];
     }
+    // Try extracting date from URL path (e.g. /events/2026/03/25/ or /events/2026-03-25)
+    if (!dateStr) {
+      const urlDateMatch = href.match(/(\d{4})[\/\-](\d{2})[\/\-](\d{2})/);
+      if (urlDateMatch) dateStr = `${urlDateMatch[1]}-${urlDateMatch[2]}-${urlDateMatch[3]}`;
+    }
 
     let location = 'London';
     const locationEl = parent.find('.location, .venue, [class*="location"], [class*="venue"]');

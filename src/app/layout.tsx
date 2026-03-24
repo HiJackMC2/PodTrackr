@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Events for Christian",
-  description: "Curated London events from 30+ sources — think tanks, universities, lecture series & more. Keyword-matched to your interests.",
+  description: "Curated London events from 75+ sources — think tanks, universities, museums, lecture series & more. Keyword-matched to your interests.",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
