@@ -8,7 +8,6 @@ CREATE TABLE IF NOT EXISTS sources (
   url TEXT NOT NULL,
   scrape_type TEXT NOT NULL CHECK (scrape_type IN ('rss', 'html', 'api', 'eventbrite', 'ics')),
   scrape_config JSONB DEFAULT '{}',
-  category TEXT DEFAULT 'general',
   enabled BOOLEAN DEFAULT true,
   last_scraped_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT now()
@@ -71,78 +70,117 @@ CREATE INDEX IF NOT EXISTS idx_events_lat_lng ON events(latitude, longitude);
 
 -- Seed: Sources
 -- Category A: Think Tanks & Policy
-INSERT INTO sources (name, url, scrape_type, scrape_config, category) VALUES
-  ('UK Constitutional Law Association', 'https://ukconstitutionallaw.org', 'rss', '{"feed_url": "https://ukconstitutionallaw.org/feed/", "event_keywords": ["seminar", "lecture", "conference", "workshop", "event", "roundtable"]}', 'legal-constitutional'),
-  ('Fabian Society', 'https://fabians.org.uk', 'html', '{"events_url": "https://fabians.org.uk/events/", "selectors": {"list": "article.event, .event-item, .type-tribe_events", "title": "h2 a, .event-title", "date": "time, .event-date", "link": "a[href*=event]", "description": ".event-excerpt, .event-description"}}', 'think-tank'),
-  ('Pints of Knowledge', 'https://www.pintsofknowledge.co.uk', 'api', '{"ticket_url": "https://www.tickettailor.com/events/pintsofknowledge", "fallback_url": "https://www.pintsofknowledge.co.uk/"}', 'casual-intellectual'),
-  ('Management Consultancies Association', 'https://www.mca.org.uk', 'html', '{"events_url": "https://www.mca.org.uk/events", "selectors": {"list": ".event-card, .event-item, article", "title": "h3, h2, .event-title", "date": "time, .event-date, .date", "link": "a[href*=event]", "location": ".event-location, .location", "description": ".event-description, .excerpt"}}', 'consulting'),
-  ('IPPR', 'https://www.ippr.org', 'html', '{"events_url": "https://www.ippr.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'think-tank'),
-  ('Resolution Foundation', 'https://www.resolutionfoundation.org', 'html', '{"events_url": "https://www.resolutionfoundation.org/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'think-tank'),
-  ('Institute for Government', 'https://www.instituteforgovernment.org.uk', 'html', '{"events_url": "https://www.instituteforgovernment.org.uk/our-events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'think-tank'),
-  ('Demos', 'https://demos.co.uk', 'html', '{"events_url": "https://demos.co.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'think-tank'),
-  ('Social Market Foundation', 'https://www.smf.co.uk', 'html', '{"events_url": "https://www.smf.co.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'think-tank'),
-  ('Chatham House', 'https://www.chathamhouse.org', 'rss', '{"feed_url": "https://www.chathamhouse.org/rss/events", "event_keywords": []}', 'international-affairs'),
-  ('UK in a Changing Europe', 'https://ukandeu.ac.uk', 'html', '{"events_url": "https://ukandeu.ac.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'think-tank'),
-  ('New Economics Foundation', 'https://neweconomics.org', 'html', '{"events_url": "https://neweconomics.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'think-tank')
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('UK Constitutional Law Association', 'https://ukconstitutionallaw.org', 'rss', '{"feed_url": "https://ukconstitutionallaw.org/feed/", "event_keywords": ["seminar", "lecture", "conference", "workshop", "event", "roundtable"]}'),
+  ('Fabian Society', 'https://fabians.org.uk', 'html', '{"events_url": "https://fabians.org.uk/events/", "selectors": {"list": "article.event, .event-item, .type-tribe_events", "title": "h2 a, .event-title", "date": "time, .event-date", "link": "a[href*=event]", "description": ".event-excerpt, .event-description"}}'),
+  ('Pints of Knowledge', 'https://www.pintsofknowledge.co.uk', 'api', '{"ticket_url": "https://www.tickettailor.com/events/pintsofknowledge", "fallback_url": "https://www.pintsofknowledge.co.uk/"}'),
+  ('Management Consultancies Association', 'https://www.mca.org.uk', 'html', '{"events_url": "https://www.mca.org.uk/events", "selectors": {"list": ".event-card, .event-item, article", "title": "h3, h2, .event-title", "date": "time, .event-date, .date", "link": "a[href*=event]", "location": ".event-location, .location", "description": ".event-description, .excerpt"}}'),
+  ('IPPR', 'https://www.ippr.org', 'html', '{"events_url": "https://www.ippr.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Resolution Foundation', 'https://www.resolutionfoundation.org', 'html', '{"events_url": "https://www.resolutionfoundation.org/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Institute for Government', 'https://www.instituteforgovernment.org.uk', 'html', '{"events_url": "https://www.instituteforgovernment.org.uk/our-events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Demos', 'https://demos.co.uk', 'html', '{"events_url": "https://demos.co.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Social Market Foundation', 'https://www.smf.co.uk', 'html', '{"events_url": "https://www.smf.co.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Chatham House', 'https://www.chathamhouse.org', 'rss', '{"feed_url": "https://www.chathamhouse.org/rss/events", "event_keywords": []}'),
+  ('UK in a Changing Europe', 'https://ukandeu.ac.uk', 'html', '{"events_url": "https://ukandeu.ac.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('New Economics Foundation', 'https://neweconomics.org', 'html', '{"events_url": "https://neweconomics.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
 ON CONFLICT (name) DO NOTHING;
 
 -- Category B: Legal & Constitutional
-INSERT INTO sources (name, url, scrape_type, scrape_config, category) VALUES
-  ('UCL Constitution Unit', 'https://www.ucl.ac.uk/constitution-unit', 'html', '{"events_url": "https://www.ucl.ac.uk/constitution-unit/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'legal-constitutional'),
-  ('JUSTICE', 'https://justice.org.uk', 'html', '{"events_url": "https://justice.org.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'legal-constitutional'),
-  ('Bingham Centre for the Rule of Law', 'https://bfrencelaw.org', 'html', '{"events_url": "https://www.biicl.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'legal-constitutional')
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('UCL Constitution Unit', 'https://www.ucl.ac.uk/constitution-unit', 'html', '{"events_url": "https://www.ucl.ac.uk/constitution-unit/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('JUSTICE', 'https://justice.org.uk', 'html', '{"events_url": "https://justice.org.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Bingham Centre for the Rule of Law', 'https://bfrencelaw.org', 'html', '{"events_url": "https://www.biicl.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
 ON CONFLICT (name) DO NOTHING;
 
 -- Category C: Public Intellectual Events & Lecture Series
-INSERT INTO sources (name, url, scrape_type, scrape_config, category) VALUES
-  ('Gresham College', 'https://www.gresham.ac.uk', 'html', '{"events_url": "https://www.gresham.ac.uk/whats-on", "selectors": {"link": "a[href*=lecture], a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'lectures'),
-  ('Intelligence Squared', 'https://www.intelligencesquared.com', 'html', '{"events_url": "https://www.intelligencesquared.com/attend/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'lectures'),
-  ('RSA', 'https://www.thersa.org', 'html', '{"events_url": "https://www.thersa.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'lectures'),
-  ('How To Academy', 'https://howtoacademy.com', 'html', '{"events_url": "https://howtoacademy.com/events-calendar/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'lectures'),
-  ('5x15', 'https://www.5x15.com', 'html', '{"events_url": "https://www.5x15.com/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'lectures'),
-  ('The British Academy', 'https://www.thebritishacademy.ac.uk', 'html', '{"events_url": "https://www.thebritishacademy.ac.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'lectures'),
-  ('Conway Hall', 'https://www.conwayhall.org.uk', 'html', '{"events_url": "https://www.conwayhall.org.uk/talks/", "selectors": {"link": "a[href*=talk], a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'lectures'),
-  ('Prospect Magazine', 'https://www.prospectmagazine.co.uk', 'html', '{"events_url": "https://www.prospectmagazine.co.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'lectures'),
-  ('London Review Bookshop', 'https://www.londonreviewbookshop.co.uk', 'html', '{"events_url": "https://www.londonreviewbookshop.co.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'lectures'),
-  ('Southbank Centre', 'https://www.southbankcentre.co.uk', 'html', '{"events_url": "https://www.southbankcentre.co.uk/whats-on/talks-debates", "selectors": {"link": "a[href*=event], a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}', 'lectures')
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('Gresham College', 'https://www.gresham.ac.uk', 'html', '{"events_url": "https://www.gresham.ac.uk/whats-on", "selectors": {"link": "a[href*=lecture], a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Intelligence Squared', 'https://www.intelligencesquared.com', 'html', '{"events_url": "https://www.intelligencesquared.com/attend/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('RSA', 'https://www.thersa.org', 'html', '{"events_url": "https://www.thersa.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('How To Academy', 'https://howtoacademy.com', 'html', '{"events_url": "https://howtoacademy.com/events-calendar/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('5x15', 'https://www.5x15.com', 'html', '{"events_url": "https://www.5x15.com/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('The British Academy', 'https://www.thebritishacademy.ac.uk', 'html', '{"events_url": "https://www.thebritishacademy.ac.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Conway Hall', 'https://www.conwayhall.org.uk', 'html', '{"events_url": "https://www.conwayhall.org.uk/talks/", "selectors": {"link": "a[href*=talk], a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Prospect Magazine', 'https://www.prospectmagazine.co.uk', 'html', '{"events_url": "https://www.prospectmagazine.co.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('London Review Bookshop', 'https://www.londonreviewbookshop.co.uk', 'html', '{"events_url": "https://www.londonreviewbookshop.co.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Southbank Centre', 'https://www.southbankcentre.co.uk', 'html', '{"events_url": "https://www.southbankcentre.co.uk/whats-on/talks-debates", "selectors": {"link": "a[href*=event], a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}')
 ON CONFLICT (name) DO NOTHING;
 
 -- Category D: University Public Lectures
-INSERT INTO sources (name, url, scrape_type, scrape_config, category) VALUES
-  ('LSE Public Events', 'https://www.lse.ac.uk', 'html', '{"events_url": "https://www.lse.ac.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'university'),
-  ('UCL Public Events', 'https://www.ucl.ac.uk', 'html', '{"events_url": "https://www.ucl.ac.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'university'),
-  ('Kings College London Events', 'https://www.kcl.ac.uk', 'html', '{"events_url": "https://www.kcl.ac.uk/events/events-calendar", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'university')
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('LSE Public Events', 'https://www.lse.ac.uk', 'html', '{"events_url": "https://www.lse.ac.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('UCL Public Events', 'https://www.ucl.ac.uk', 'html', '{"events_url": "https://www.ucl.ac.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Kings College London Events', 'https://www.kcl.ac.uk', 'html', '{"events_url": "https://www.kcl.ac.uk/events/events-calendar", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
 ON CONFLICT (name) DO NOTHING;
 
 -- Category E: Casual / Pub-based / Science Communication
-INSERT INTO sources (name, url, scrape_type, scrape_config, category) VALUES
-  ('Skeptics in the Pub', 'https://www.skepticsinthepub.org', 'html', '{"events_url": "https://www.skepticsinthepub.org/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'casual-intellectual'),
-  ('Nerd Nite London', 'https://london.nerdnite.com', 'html', '{"events_url": "https://london.nerdnite.com/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'casual-intellectual'),
-  ('Pint of Science', 'https://pintofscience.co.uk', 'html', '{"events_url": "https://pintofscience.co.uk/events/london/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'casual-intellectual'),
-  ('Royal Institution', 'https://www.rigb.org', 'html', '{"events_url": "https://www.rigb.org/whats-on", "selectors": {"link": "a[href*=event], a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}', 'casual-intellectual'),
-  ('PubSci', 'https://pubsci.info', 'html', '{"events_url": "https://pubsci.info/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'casual-intellectual')
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('Skeptics in the Pub', 'https://www.skepticsinthepub.org', 'html', '{"events_url": "https://www.skepticsinthepub.org/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Nerd Nite London', 'https://london.nerdnite.com', 'html', '{"events_url": "https://london.nerdnite.com/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Pint of Science', 'https://pintofscience.co.uk', 'html', '{"events_url": "https://pintofscience.co.uk/events/london/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Royal Institution', 'https://www.rigb.org', 'html', '{"events_url": "https://www.rigb.org/whats-on", "selectors": {"link": "a[href*=event], a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('PubSci', 'https://pubsci.info', 'html', '{"events_url": "https://pubsci.info/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
 ON CONFLICT (name) DO NOTHING;
 
 -- Category F: Debating & Political Discussion
-INSERT INTO sources (name, url, scrape_type, scrape_config, category) VALUES
-  ('Debate London', 'https://www.debate.london', 'html', '{"events_url": "https://www.debate.london/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'debate')
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('Debate London', 'https://www.debate.london', 'html', '{"events_url": "https://www.debate.london/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
 ON CONFLICT (name) DO NOTHING;
 
 -- Category G: Economics & Fiscal Policy
-INSERT INTO sources (name, url, scrape_type, scrape_config, category) VALUES
-  ('Institute for Fiscal Studies', 'https://ifs.org.uk', 'html', '{"events_url": "https://ifs.org.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'economics'),
-  ('NIESR', 'https://www.niesr.ac.uk', 'html', '{"events_url": "https://www.niesr.ac.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'economics')
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('Institute for Fiscal Studies', 'https://ifs.org.uk', 'html', '{"events_url": "https://ifs.org.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('NIESR', 'https://www.niesr.ac.uk', 'html', '{"events_url": "https://www.niesr.ac.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
 ON CONFLICT (name) DO NOTHING;
 
 -- Category H: International Affairs & Security
-INSERT INTO sources (name, url, scrape_type, scrape_config, category) VALUES
-  ('RUSI', 'https://rusi.org', 'html', '{"events_url": "https://rusi.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}', 'international-affairs')
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('RUSI', 'https://rusi.org', 'html', '{"events_url": "https://rusi.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
 ON CONFLICT (name) DO NOTHING;
 
 -- Category I: Aggregators
-INSERT INTO sources (name, url, scrape_type, scrape_config, category) VALUES
-  ('Smart Thinking', 'https://smartthinking.org.uk', 'rss', '{"feed_url": "https://smartthinking.org.uk/feed/", "event_keywords": []}', 'aggregator'),
-  ('Lectures London', 'https://lectures.london', 'html', '{"events_url": "https://lectures.london/", "selectors": {"link": "a[href*=event], a[href*=lecture]", "title": "h2, h3", "date": "time, .date"}}', 'aggregator')
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('Smart Thinking', 'https://smartthinking.org.uk', 'rss', '{"feed_url": "https://smartthinking.org.uk/feed/", "event_keywords": []}'),
+  ('Lectures London', 'https://lectures.london', 'html', '{"events_url": "https://lectures.london/", "selectors": {"link": "a[href*=event], a[href*=lecture]", "title": "h2, h3", "date": "time, .date"}}')
+ON CONFLICT (name) DO NOTHING;
+
+-- Category J: Museums, Libraries & Cultural Institutions
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('Wellcome Collection', 'https://wellcomecollection.org', 'html', '{"events_url": "https://wellcomecollection.org/events", "selectors": {"link": "a[href*=events]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('British Library', 'https://www.bl.uk', 'html', '{"events_url": "https://www.bl.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Barbican Centre', 'https://www.barbican.org.uk', 'html', '{"events_url": "https://www.barbican.org.uk/whats-on/talks-and-events", "selectors": {"link": "a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Science Museum', 'https://www.sciencemuseum.org.uk', 'html', '{"events_url": "https://www.sciencemuseum.org.uk/see-and-do/events", "selectors": {"link": "a[href*=event], a[href*=see-and-do]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Natural History Museum', 'https://www.nhm.ac.uk', 'html', '{"events_url": "https://www.nhm.ac.uk/events.html", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('V&A', 'https://www.vam.ac.uk', 'html', '{"events_url": "https://www.vam.ac.uk/whatson", "selectors": {"link": "a[href*=whatson], a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
+ON CONFLICT (name) DO NOTHING;
+
+-- Category K: Additional Think Tanks
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('Policy Exchange', 'https://policyexchange.org.uk', 'html', '{"events_url": "https://policyexchange.org.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Centre for Policy Studies', 'https://cps.org.uk', 'html', '{"events_url": "https://cps.org.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Adam Smith Institute', 'https://www.adamsmith.org', 'html', '{"events_url": "https://www.adamsmith.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Onward', 'https://www.ukonward.com', 'html', '{"events_url": "https://www.ukonward.com/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Reform', 'https://reform.uk', 'html', '{"events_url": "https://reform.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('The Kings Fund', 'https://www.kingsfund.org.uk', 'html', '{"events_url": "https://www.kingsfund.org.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Nuffield Trust', 'https://www.nuffieldtrust.org.uk', 'html', '{"events_url": "https://www.nuffieldtrust.org.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
+ON CONFLICT (name) DO NOTHING;
+
+-- Category L: Additional Academic / Learned Societies
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('The Royal Society', 'https://royalsociety.org', 'html', '{"events_url": "https://royalsociety.org/science-events-and-lectures/", "selectors": {"link": "a[href*=event], a[href*=lecture]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('SOAS University of London', 'https://www.soas.ac.uk', 'html', '{"events_url": "https://www.soas.ac.uk/about/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Imperial College London', 'https://www.imperial.ac.uk', 'html', '{"events_url": "https://www.imperial.ac.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Frontline Club', 'https://www.frontlineclub.com', 'html', '{"events_url": "https://www.frontlineclub.com/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Royal Geographic Society', 'https://www.rgs.org', 'html', '{"events_url": "https://www.rgs.org/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('London School of Hygiene', 'https://www.lshtm.ac.uk', 'html', '{"events_url": "https://www.lshtm.ac.uk/newsevents/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Goldsmiths University', 'https://www.gold.ac.uk', 'html', '{"events_url": "https://www.gold.ac.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
+ON CONFLICT (name) DO NOTHING;
+
+-- Category M: International Affairs & Foreign Policy
+INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
+  ('International Institute for Strategic Studies', 'https://www.iiss.org', 'html', '{"events_url": "https://www.iiss.org/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('European Council on Foreign Relations', 'https://ecfr.eu', 'html', '{"events_url": "https://ecfr.eu/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
+  ('Overseas Development Institute', 'https://odi.org', 'html', '{"events_url": "https://odi.org/en/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
 ON CONFLICT (name) DO NOTHING;
 
 -- Seed: Interests
@@ -156,7 +194,7 @@ INSERT INTO interests (name, slug, color, icon) VALUES
   ('Technology & AI', 'technology-ai', '#4f46e5', 'cpu'),
   ('Health & Public Services', 'health-services', '#e11d48', 'heart-pulse'),
   ('Economics & Fiscal', 'economics-fiscal', '#ca8a04', 'trending-up'),
-  ('International Affairs', 'international-affairs', '#059669', 'globe')
+  ('International Affairs', 'international-affairs', '#059669')
 ON CONFLICT (name) DO NOTHING;
 
 -- Enable RLS (Row Level Security) - open for now since single-user
