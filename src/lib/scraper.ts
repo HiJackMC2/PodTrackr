@@ -133,7 +133,7 @@ export function matchInterests(title: string, description: string | null): strin
 
 async function scrapeRSS(source: Source): Promise<ParsedEvent[]> {
   const config = source.scrape_config as { feed_url: string; event_keywords?: string[] };
-  const response = await fetch(config.feed_url, { signal: AbortSignal.timeout(8000) });
+  const response = await fetch(config.feed_url, { signal: AbortSignal.timeout(5000) });
   const xml = await response.text();
 
   const items = xml.split('<item>').slice(1);
@@ -191,7 +191,7 @@ async function scrapeHTML(source: Source): Promise<ParsedEvent[]> {
   try {
     response = await fetch(config.events_url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; EventsForChristian/1.0)' },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(5000),
     });
   } catch {
     return [];
@@ -423,7 +423,7 @@ async function scrapeAPI(source: Source): Promise<ParsedEvent[]> {
     const response = await fetch(config.ticket_url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; EventsForChristian/1.0)' },
       redirect: 'follow',
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(5000),
     });
     if (response.ok) {
       const html = await response.text();
@@ -522,12 +522,20 @@ export async function scrapeAllSources(): Promise<{ total: number; errors: strin
 
   let total = 0;
   const errors: string[] = [];
+  const startTime = Date.now();
+  const MAX_SCRAPE_TIME = 40000; // 40s for scraping, leaves 20s for DB inserts
 
-  // Scrape all sources concurrently in batches of 10
-  const BATCH_SIZE = 10;
+  // Scrape all sources concurrently in large batches
+  const BATCH_SIZE = 20;
   const allResults: { source: Source; events: ParsedEvent[]; error?: string }[] = [];
 
   for (let i = 0; i < sources.length; i += BATCH_SIZE) {
+    // Check if we're running out of time
+    if (Date.now() - startTime > MAX_SCRAPE_TIME) {
+      errors.push(`Time limit reached after ${Math.round((Date.now() - startTime) / 1000)}s — scraped ${i}/${sources.length} sources`);
+      break;
+    }
+
     const batch = sources.slice(i, i + BATCH_SIZE);
     const results = await Promise.all(
       batch.map(async (source) => {
