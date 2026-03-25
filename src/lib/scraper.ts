@@ -210,8 +210,65 @@ async function scrapeHTML(source: Source): Promise<ParsedEvent[]> {
     return scrapeFabians($, source.url);
   }
 
+  // Try JSON-LD structured data first (many sites have this)
+  const jsonLdEvents = scrapeJsonLD($, source.url, source.name);
+  if (jsonLdEvents.length > 0) return jsonLdEvents;
+
   // Generic scraper for all other HTML sources
   return scrapeGenericHTML($, source.url, source.name, config.selectors);
+}
+
+// Extract events from JSON-LD structured data (Schema.org Event type)
+function scrapeJsonLD($: cheerio.CheerioAPI, baseUrl: string, sourceName: string): ParsedEvent[] {
+  const events: ParsedEvent[] = [];
+
+  $('script[type="application/ld+json"]').each((_, el) => {
+    try {
+      const data = JSON.parse($(el).html() || '');
+      const items = Array.isArray(data) ? data : data['@graph'] ? data['@graph'] : [data];
+
+      for (const item of items) {
+        if (item['@type'] !== 'Event' && item['@type'] !== 'MusicEvent' && item['@type'] !== 'EducationEvent') continue;
+
+        const title = item.name;
+        if (!title || isJunkTitle(title)) continue;
+
+        const date = item.startDate || null;
+        const endDate = item.endDate || null;
+        const url = item.url || baseUrl;
+        const description = typeof item.description === 'string' ? item.description.slice(0, 500) : null;
+
+        let location = 'London';
+        if (item.location) {
+          if (typeof item.location === 'string') location = item.location;
+          else if (item.location.name) location = item.location.name;
+          else if (item.location.address) {
+            if (typeof item.location.address === 'string') location = item.location.address;
+            else if (item.location.address.addressLocality) location = item.location.address.addressLocality;
+          }
+        }
+
+        const isFree = item.isAccessibleForFree === true || (item.offers && item.offers.price === 0);
+        const isOnline = item.eventAttendanceMode?.includes('Online') || false;
+
+        events.push({
+          title: decodeHTML(title),
+          description,
+          date: date ? parseFlexibleDate(date) : null,
+          end_date: endDate ? parseFlexibleDate(endDate) : null,
+          location: isOnline ? 'Online' : location,
+          url: typeof url === 'string' ? url : baseUrl,
+          is_free: !!isFree,
+          is_online: isOnline,
+          external_id: typeof url === 'string' ? url : title,
+        });
+      }
+    } catch {
+      // Invalid JSON-LD, skip
+    }
+  });
+
+  return events.filter(e => e.date !== null) as ParsedEvent[];
 }
 
 function scrapeGenericHTML(
