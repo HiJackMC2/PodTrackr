@@ -645,16 +645,25 @@ export async function scrapeAllSources(): Promise<{ total: number; errors: strin
     }
   }
 
+  // Deduplicate events by (source_id, external_id) to avoid upsert conflicts
+  const seen = new Set<string>();
+  const deduped = allEventsToInsert.filter(e => {
+    const key = `${e.source_id}:${e.external_id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
   // Batch upsert all events at once (much faster than individual inserts)
-  if (allEventsToInsert.length > 0) {
+  if (deduped.length > 0) {
     const DB_BATCH_SIZE = 50;
-    for (let i = 0; i < allEventsToInsert.length; i += DB_BATCH_SIZE) {
+    for (let i = 0; i < deduped.length; i += DB_BATCH_SIZE) {
       if (Date.now() - startTime > MAX_TIME) {
-        errors.push(`DB time limit: inserted ${i}/${allEventsToInsert.length} events`);
+        errors.push(`DB time limit: inserted ${i}/${deduped.length} events`);
         break;
       }
 
-      const batch = allEventsToInsert.slice(i, i + DB_BATCH_SIZE);
+      const batch = deduped.slice(i, i + DB_BATCH_SIZE);
       const { data: inserted, error } = await supabase
         .from('events')
         .upsert(batch, { onConflict: 'source_id,external_id' })
