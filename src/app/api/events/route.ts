@@ -99,6 +99,16 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
   }
 
+  // Verify event exists
+  const { data: eventExists } = await supabase
+    .from('events')
+    .select('id')
+    .eq('id', event_id)
+    .limit(1);
+  if (!eventExists || eventExists.length === 0) {
+    return NextResponse.json({ error: 'Event not found' }, { status: 404 });
+  }
+
   // Check if there's an existing action
   const { data: existingRows } = await supabase
     .from('event_actions')
