@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PodTrackr
 
-## Getting Started
+**Track corporate parenthood initiatives** — the programs companies run to support
+employees becoming and being parents: parental leave, childcare, fertility &
+family-forming benefits, flexible work, return-to-work support, nursing &
+wellbeing, financial help, and parent communities.
 
-First, run the development server:
+Browse by category, compare across companies, follow the initiatives you care
+about, and see how the landscape stacks up in the Insights view.
+
+## Features
+
+- **Discover** — filter initiatives by category and rollout status, or search across
+  titles, descriptions and companies.
+- **Companies** — expandable per-company view of every initiative on file.
+- **Following** — star initiatives to build a shortlist (saved in your browser).
+- **Insights** — benchmarks: average paid leave, gender-neutral share, rollout
+  status and the companies doing the most.
+- **Add** — log an initiative (and a new company) yourself.
+
+## Getting started
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). PodTrackr works immediately
+on a **bundled demo dataset** — no configuration required. Your follows and any
+initiatives you add persist in the browser via `localStorage`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Optional: persist to Supabase
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+To store data in your own database instead of the demo dataset:
 
-## Learn More
+1. Create a [Supabase](https://supabase.com) project.
+2. Run [`supabase/schema.sql`](supabase/schema.sql) in the SQL editor (it creates
+   the tables and seeds a starter set).
+3. Copy `.env.local.example` to `.env.local` and fill in your project URL and
+   anon key.
 
-To learn more about Next.js, take a look at the following resources:
+When those env vars are present the app reads from and writes new initiatives to
+Supabase; otherwise it falls back to the demo data automatically.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Tech
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **Next.js 16** (App Router) + **React 19**
+- **Tailwind CSS v4**
+- **Supabase** (optional persistence)
+- **lucide-react** icons
 
-## Deploy on Vercel
+## Project structure
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+src/
+  app/
+    api/catalog/route.ts   # GET catalog + POST new initiative (Supabase or demo)
+    page.tsx               # dashboard (Discover / Companies / Following / Insights / About)
+    layout.tsx
+  components/              # InitiativeCard, CompanyCard, StatsView, AddInitiativeModal, …
+  lib/
+    catalog.ts             # data access with Supabase -> demo fallback
+    demo-data.ts           # bundled seed dataset
+    supabase.ts            # client + domain types
+supabase/schema.sql        # tables + seed
+```

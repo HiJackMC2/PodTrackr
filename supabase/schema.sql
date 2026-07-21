@@ -1,275 +1,114 @@
--- EventRadar Database Schema
--- Run this in your Supabase SQL editor to set up the database
+-- PodTrackr Database Schema
+-- Corporate parenthood initiatives tracker.
+-- Run this in your Supabase SQL editor to set up the database.
+-- The app runs on bundled demo data when these tables/env vars are absent,
+-- so Supabase is optional — set it up to persist your own data.
 
--- Sources: the organizations we scrape events from
-CREATE TABLE IF NOT EXISTS sources (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  url TEXT NOT NULL,
-  scrape_type TEXT NOT NULL CHECK (scrape_type IN ('rss', 'html', 'api', 'eventbrite', 'ics')),
-  scrape_config JSONB DEFAULT '{}',
-  enabled BOOLEAN DEFAULT true,
-  last_scraped_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
--- Interest tags that events can be categorized under
-CREATE TABLE IF NOT EXISTS interests (
+-- Categories of parenthood initiatives
+CREATE TABLE IF NOT EXISTS categories (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   slug TEXT NOT NULL UNIQUE,
   color TEXT NOT NULL DEFAULT '#6366f1',
-  icon TEXT DEFAULT 'tag',
+  icon TEXT DEFAULT 'baby',
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Events scraped from sources
-CREATE TABLE IF NOT EXISTS events (
+-- Companies whose initiatives we track
+CREATE TABLE IF NOT EXISTS companies (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  source_id UUID REFERENCES sources(id) ON DELETE CASCADE,
+  name TEXT NOT NULL UNIQUE,
+  industry TEXT,
+  size TEXT,
+  headquarters TEXT,
+  website TEXT,
+  color TEXT NOT NULL DEFAULT '#6366f1',
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Parenthood initiatives offered by companies
+CREATE TABLE IF NOT EXISTS initiatives (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
+  category_slug TEXT NOT NULL REFERENCES categories(slug),
   title TEXT NOT NULL,
   description TEXT,
-  date TIMESTAMPTZ NOT NULL,
-  end_date TIMESTAMPTZ,
-  location TEXT,
-  city TEXT DEFAULT 'London',
-  url TEXT NOT NULL,
-  image_url TEXT,
-  is_free BOOLEAN DEFAULT false,
-  is_online BOOLEAN DEFAULT false,
-  external_id TEXT,
-  latitude DOUBLE PRECISION,
-  longitude DOUBLE PRECISION,
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('planned', 'piloting', 'active', 'paused', 'retired')),
+  leave_weeks NUMERIC,
+  gender_neutral BOOLEAN DEFAULT false,
+  is_paid BOOLEAN DEFAULT true,
+  stipend_amount NUMERIC,
+  currency TEXT DEFAULT 'USD',
+  start_date DATE,
+  source_url TEXT,
   created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE(source_id, external_id)
+  updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Junction table: events <-> interests
-CREATE TABLE IF NOT EXISTS event_interests (
-  event_id UUID REFERENCES events(id) ON DELETE CASCADE,
-  interest_id UUID REFERENCES interests(id) ON DELETE CASCADE,
-  PRIMARY KEY (event_id, interest_id)
-);
+CREATE INDEX IF NOT EXISTS idx_initiatives_company ON initiatives(company_id);
+CREATE INDEX IF NOT EXISTS idx_initiatives_category ON initiatives(category_slug);
+CREATE INDEX IF NOT EXISTS idx_initiatives_status ON initiatives(status);
 
--- User event actions (saved / hidden)
-CREATE TABLE IF NOT EXISTS event_actions (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  event_id UUID REFERENCES events(id) ON DELETE CASCADE,
-  action TEXT NOT NULL CHECK (action IN ('saved', 'hidden')),
-  created_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE(event_id, action)
-);
+-- Seed: categories
+INSERT INTO categories (name, slug, color, icon) VALUES
+  ('Parental Leave', 'parental-leave', '#6366f1', 'baby'),
+  ('Childcare Support', 'childcare', '#0891b2', 'building-2'),
+  ('Fertility & Family Forming', 'fertility', '#db2777', 'heart'),
+  ('Flexible Work', 'flexible-work', '#16a34a', 'clock'),
+  ('Return to Work', 'return-to-work', '#ea580c', 'briefcase'),
+  ('Nursing & Wellbeing', 'wellbeing', '#9333ea', 'milk'),
+  ('Financial Support', 'financial', '#ca8a04', 'gift'),
+  ('Community & ERGs', 'community', '#0d9488', 'users')
+ON CONFLICT (slug) DO NOTHING;
 
--- Indexes for performance
-CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
-CREATE INDEX IF NOT EXISTS idx_events_city ON events(city);
-CREATE INDEX IF NOT EXISTS idx_events_source ON events(source_id);
-CREATE INDEX IF NOT EXISTS idx_event_actions_action ON event_actions(action);
-CREATE INDEX IF NOT EXISTS idx_events_lat_lng ON events(latitude, longitude);
-
--- Seed: Sources
--- Category A: Think Tanks & Policy
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('UK Constitutional Law Association', 'https://ukconstitutionallaw.org', 'rss', '{"feed_url": "https://ukconstitutionallaw.org/feed/", "event_keywords": ["seminar", "lecture", "conference", "workshop", "event", "roundtable"]}'),
-  ('Fabian Society', 'https://fabians.org.uk', 'html', '{"events_url": "https://fabians.org.uk/events/", "selectors": {"list": "article.event, .event-item, .type-tribe_events", "title": "h2 a, .event-title", "date": "time, .event-date", "link": "a[href*=event]", "description": ".event-excerpt, .event-description"}}'),
-  ('Pints of Knowledge', 'https://www.pintsofknowledge.co.uk', 'api', '{"ticket_url": "https://www.tickettailor.com/events/pintsofknowledge", "fallback_url": "https://www.pintsofknowledge.co.uk/"}'),
-  ('Management Consultancies Association', 'https://www.mca.org.uk', 'html', '{"events_url": "https://www.mca.org.uk/events", "selectors": {"list": ".event-card, .event-item, article", "title": "h3, h2, .event-title", "date": "time, .event-date, .date", "link": "a[href*=event]", "location": ".event-location, .location", "description": ".event-description, .excerpt"}}'),
-  ('IPPR', 'https://www.ippr.org', 'html', '{"events_url": "https://www.ippr.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Resolution Foundation', 'https://www.resolutionfoundation.org', 'html', '{"events_url": "https://www.resolutionfoundation.org/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Institute for Government', 'https://www.instituteforgovernment.org.uk', 'html', '{"events_url": "https://www.instituteforgovernment.org.uk/our-events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Demos', 'https://demos.co.uk', 'html', '{"events_url": "https://demos.co.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Social Market Foundation', 'https://www.smf.co.uk', 'html', '{"events_url": "https://www.smf.co.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Chatham House', 'https://www.chathamhouse.org', 'rss', '{"feed_url": "https://www.chathamhouse.org/rss/events", "event_keywords": []}'),
-  ('UK in a Changing Europe', 'https://ukandeu.ac.uk', 'html', '{"events_url": "https://ukandeu.ac.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('New Economics Foundation', 'https://neweconomics.org', 'html', '{"events_url": "https://neweconomics.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
+-- Seed: companies
+INSERT INTO companies (name, industry, size, headquarters, website, color) VALUES
+  ('Patagonia', 'Retail', '1,000–5,000', 'Ventura, CA', 'https://www.patagonia.com', '#1d4ed8'),
+  ('Netflix', 'Media & Streaming', '10,000+', 'Los Gatos, CA', 'https://www.netflix.com', '#dc2626'),
+  ('Microsoft', 'Technology', '10,000+', 'Redmond, WA', 'https://www.microsoft.com', '#0ea5e9'),
+  ('Etsy', 'E-commerce', '1,000–5,000', 'Brooklyn, NY', 'https://www.etsy.com', '#ea580c'),
+  ('Salesforce', 'Technology', '10,000+', 'San Francisco, CA', 'https://www.salesforce.com', '#2563eb'),
+  ('Spotify', 'Media & Streaming', '5,000–10,000', 'Stockholm, SE', 'https://www.spotify.com', '#16a34a'),
+  ('Unilever', 'Consumer Goods', '10,000+', 'London, UK', 'https://www.unilever.com', '#0d9488'),
+  ('Adobe', 'Technology', '10,000+', 'San Jose, CA', 'https://www.adobe.com', '#db2777')
 ON CONFLICT (name) DO NOTHING;
 
--- Category B: Legal & Constitutional
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('UCL Constitution Unit', 'https://www.ucl.ac.uk/constitution-unit', 'html', '{"events_url": "https://www.ucl.ac.uk/constitution-unit/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('JUSTICE', 'https://justice.org.uk', 'html', '{"events_url": "https://justice.org.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Bingham Centre for the Rule of Law', 'https://bfrencelaw.org', 'html', '{"events_url": "https://www.biicl.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
+-- Seed: a starter set of initiatives (mirrors the bundled demo data)
+INSERT INTO initiatives (company_id, category_slug, title, description, status, leave_weeks, gender_neutral, is_paid, stipend_amount, currency, start_date, source_url)
+SELECT c.id, v.category_slug, v.title, v.description, v.status, v.leave_weeks, v.gender_neutral, v.is_paid, v.stipend_amount, v.currency, v.start_date::date, v.source_url
+FROM (VALUES
+  ('Patagonia', 'childcare', 'On-site child development centers', 'Company-run childcare at HQ and the distribution center, credited with ~100% maternal return-to-work.', 'active', NULL::numeric, true, true, NULL::numeric, 'USD', '1983-09-01', 'https://www.patagonia.com'),
+  ('Patagonia', 'parental-leave', '16 weeks fully paid parental leave', 'All new parents receive 16 weeks of paid leave regardless of gender or path to parenthood.', 'active', 16, true, true, NULL, 'USD', '2015-01-01', 'https://www.patagonia.com'),
+  ('Netflix', 'parental-leave', 'Flexible first-year parental leave', 'Salaried employees take leave flexibly across the first year after birth or adoption.', 'active', 52, true, true, NULL, 'USD', '2015-08-01', 'https://www.netflix.com'),
+  ('Microsoft', 'parental-leave', '20 weeks paid maternity / 12 weeks paid parental', 'Birthing parents receive 20 weeks fully paid; all parents receive 12 additional weeks of paid parental leave.', 'active', 20, false, true, NULL, 'USD', '2015-11-01', 'https://www.microsoft.com'),
+  ('Microsoft', 'return-to-work', 'Phased "ramp back" return', 'Reduced hours at full pay for the first four weeks back from parental leave.', 'active', NULL, true, true, NULL, 'USD', '2019-03-01', 'https://www.microsoft.com'),
+  ('Etsy', 'parental-leave', '26 weeks gender-neutral parental leave', 'Every new parent gets 26 weeks fully paid, taken any time in the first two years.', 'active', 26, true, true, NULL, 'USD', '2016-04-01', 'https://www.etsy.com'),
+  ('Salesforce', 'fertility', 'Fertility & adoption reimbursement', 'Up to $10,000 toward fertility treatment and up to $10,000 in adoption assistance per child.', 'active', NULL, true, true, 10000, 'USD', '2018-06-01', 'https://www.salesforce.com'),
+  ('Salesforce', 'childcare', 'Backup childcare days', 'Subsidised backup care for up to 25 days per year.', 'active', NULL, true, true, NULL, 'USD', '2020-01-01', 'https://www.salesforce.com'),
+  ('Spotify', 'parental-leave', '6 months paid parental leave', 'Global standard of six months paid leave for all parents plus a flexible welcome-back month.', 'active', 26, true, true, NULL, 'USD', '2015-11-01', 'https://www.spotify.com'),
+  ('Spotify', 'flexible-work', 'Work From Anywhere for parents', 'Employees choose their work mode and location to balance caregiving.', 'active', NULL, true, true, NULL, 'USD', '2021-02-01', 'https://www.spotify.com'),
+  ('Unilever', 'parental-leave', 'Global minimum 6-week paid parental leave', 'A worldwide floor of at least six weeks fully paid leave, rolling out across markets.', 'piloting', 6, true, true, NULL, 'GBP', '2024-06-01', 'https://www.unilever.com'),
+  ('Unilever', 'wellbeing', 'Lactation rooms & shipping', 'Dedicated nursing rooms and free breast-milk shipping for parents travelling on business.', 'active', NULL, false, true, NULL, 'GBP', '2019-09-01', 'https://www.unilever.com'),
+  ('Adobe', 'parental-leave', '16 weeks paid parental + 10 weeks medical', 'All parents get 16 weeks paid parental leave; birthing parents get 10 additional weeks of paid medical leave.', 'active', 16, true, true, NULL, 'USD', '2015-11-01', 'https://www.adobe.com'),
+  ('Adobe', 'community', 'Parents & Caregivers ERG', 'Employee resource group offering peer support, workshops and a mentor network.', 'active', NULL, true, false, NULL, 'USD', '2017-05-01', 'https://www.adobe.com'),
+  ('Etsy', 'financial', 'New-child stipend', 'A one-off payment to help cover the early costs of a new arrival.', 'planned', NULL, true, true, 2000, 'USD', '2025-01-01', 'https://www.etsy.com'),
+  ('Netflix', 'fertility', 'Family-forming benefit', 'Coverage for fertility treatment, egg freezing, surrogacy and adoption.', 'active', NULL, true, true, 20000, 'USD', '2020-01-01', 'https://www.netflix.com'),
+  ('Microsoft', 'flexible-work', 'Flexible & hybrid scheduling', 'Up to 50% remote work as standard, with flexible hours for caregiving.', 'active', NULL, true, true, NULL, 'USD', '2020-10-01', 'https://www.microsoft.com'),
+  ('Salesforce', 'return-to-work', 'Returnship programme', 'A paid, structured re-entry path after an extended caregiving break.', 'piloting', NULL, true, true, NULL, 'USD', '2024-09-01', 'https://www.salesforce.com'),
+  ('Patagonia', 'community', 'Parents-at-work network', 'Peer community, family events and paid time to volunteer at a child’s school.', 'active', NULL, true, false, NULL, 'USD', '2010-01-01', 'https://www.patagonia.com'),
+  ('Spotify', 'wellbeing', 'Egg-freezing & fertility support', 'Reimbursement for egg freezing and fertility assistance.', 'active', NULL, false, true, 15000, 'USD', '2017-01-01', 'https://www.spotify.com'),
+  ('Adobe', 'childcare', 'Childcare subsidy pilot', 'Means-tested monthly subsidy toward licensed childcare, piloting in three US locations.', 'piloting', NULL, true, true, 1200, 'USD', '2024-03-01', 'https://www.adobe.com'),
+  ('Unilever', 'return-to-work', 'Keep-in-touch days', 'Up to 10 optional paid days during leave to stay connected and ease the return.', 'active', NULL, true, true, NULL, 'GBP', '2018-01-01', 'https://www.unilever.com')
+) AS v(company_name, category_slug, title, description, status, leave_weeks, gender_neutral, is_paid, stipend_amount, currency, start_date, source_url)
+JOIN companies c ON c.name = v.company_name
+ON CONFLICT DO NOTHING;
 
--- Category C: Public Intellectual Events & Lecture Series
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('Gresham College', 'https://www.gresham.ac.uk', 'html', '{"events_url": "https://www.gresham.ac.uk/whats-on", "selectors": {"link": "a[href*=lecture], a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Intelligence Squared', 'https://www.intelligencesquared.com', 'html', '{"events_url": "https://www.intelligencesquared.com/attend/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('RSA', 'https://www.thersa.org', 'html', '{"events_url": "https://www.thersa.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('How To Academy', 'https://howtoacademy.com', 'html', '{"events_url": "https://howtoacademy.com/events-calendar/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('5x15', 'https://www.5x15.com', 'html', '{"events_url": "https://www.5x15.com/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('The British Academy', 'https://www.thebritishacademy.ac.uk', 'html', '{"events_url": "https://www.thebritishacademy.ac.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Conway Hall', 'https://www.conwayhall.org.uk', 'html', '{"events_url": "https://www.conwayhall.org.uk/talks/", "selectors": {"link": "a[href*=talk], a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Prospect Magazine', 'https://www.prospectmagazine.co.uk', 'html', '{"events_url": "https://www.prospectmagazine.co.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('London Review Bookshop', 'https://www.londonreviewbookshop.co.uk', 'html', '{"events_url": "https://www.londonreviewbookshop.co.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Southbank Centre', 'https://www.southbankcentre.co.uk', 'html', '{"events_url": "https://www.southbankcentre.co.uk/whats-on/talks-debates", "selectors": {"link": "a[href*=event], a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
+-- Row Level Security (single-user app: open policies)
+ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE initiatives ENABLE ROW LEVEL SECURITY;
 
--- Category D: University Public Lectures
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('LSE Public Events', 'https://www.lse.ac.uk', 'html', '{"events_url": "https://www.lse.ac.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('UCL Public Events', 'https://www.ucl.ac.uk', 'html', '{"events_url": "https://www.ucl.ac.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Kings College London Events', 'https://www.kcl.ac.uk', 'html', '{"events_url": "https://www.kcl.ac.uk/events/events-calendar", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Category E: Casual / Pub-based / Science Communication
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('Skeptics in the Pub', 'https://www.skepticsinthepub.org', 'html', '{"events_url": "https://www.skepticsinthepub.org/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Nerd Nite London', 'https://london.nerdnite.com', 'html', '{"events_url": "https://london.nerdnite.com/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Pint of Science', 'https://pintofscience.co.uk', 'html', '{"events_url": "https://pintofscience.co.uk/events/london/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Royal Institution', 'https://www.rigb.org', 'html', '{"events_url": "https://www.rigb.org/whats-on", "selectors": {"link": "a[href*=event], a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('PubSci', 'https://pubsci.info', 'html', '{"events_url": "https://pubsci.info/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Category F: Debating & Political Discussion
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('Debate London', 'https://www.debate.london', 'html', '{"events_url": "https://www.debate.london/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Category G: Economics & Fiscal Policy
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('Institute for Fiscal Studies', 'https://ifs.org.uk', 'html', '{"events_url": "https://ifs.org.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('NIESR', 'https://www.niesr.ac.uk', 'html', '{"events_url": "https://www.niesr.ac.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Category H: International Affairs & Security
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('RUSI', 'https://rusi.org', 'html', '{"events_url": "https://rusi.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Category I: Aggregators
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('Smart Thinking', 'https://smartthinking.org.uk', 'rss', '{"feed_url": "https://smartthinking.org.uk/feed/", "event_keywords": []}'),
-  ('Lectures London', 'https://lectures.london', 'html', '{"events_url": "https://lectures.london/", "selectors": {"link": "a[href*=event], a[href*=lecture]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Category J: Museums, Libraries & Cultural Institutions
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('Wellcome Collection', 'https://wellcomecollection.org', 'html', '{"events_url": "https://wellcomecollection.org/events", "selectors": {"link": "a[href*=events]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('British Library', 'https://www.bl.uk', 'html', '{"events_url": "https://www.bl.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Barbican Centre', 'https://www.barbican.org.uk', 'html', '{"events_url": "https://www.barbican.org.uk/whats-on/talks-and-events", "selectors": {"link": "a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Science Museum', 'https://www.sciencemuseum.org.uk', 'html', '{"events_url": "https://www.sciencemuseum.org.uk/see-and-do/events", "selectors": {"link": "a[href*=event], a[href*=see-and-do]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Natural History Museum', 'https://www.nhm.ac.uk', 'html', '{"events_url": "https://www.nhm.ac.uk/events.html", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('V&A', 'https://www.vam.ac.uk', 'html', '{"events_url": "https://www.vam.ac.uk/whatson", "selectors": {"link": "a[href*=whatson], a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Category K: Additional Think Tanks
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('Policy Exchange', 'https://policyexchange.org.uk', 'html', '{"events_url": "https://policyexchange.org.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Centre for Policy Studies', 'https://cps.org.uk', 'html', '{"events_url": "https://cps.org.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Adam Smith Institute', 'https://www.adamsmith.org', 'html', '{"events_url": "https://www.adamsmith.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Onward', 'https://www.ukonward.com', 'html', '{"events_url": "https://www.ukonward.com/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Reform', 'https://reform.uk', 'html', '{"events_url": "https://reform.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('The Kings Fund', 'https://www.kingsfund.org.uk', 'html', '{"events_url": "https://www.kingsfund.org.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Nuffield Trust', 'https://www.nuffieldtrust.org.uk', 'html', '{"events_url": "https://www.nuffieldtrust.org.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Category L: Additional Academic / Learned Societies
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('The Royal Society', 'https://royalsociety.org', 'html', '{"events_url": "https://royalsociety.org/science-events-and-lectures/", "selectors": {"link": "a[href*=event], a[href*=lecture]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('SOAS University of London', 'https://www.soas.ac.uk', 'html', '{"events_url": "https://www.soas.ac.uk/about/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Imperial College London', 'https://www.imperial.ac.uk', 'html', '{"events_url": "https://www.imperial.ac.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Frontline Club', 'https://www.frontlineclub.com', 'html', '{"events_url": "https://www.frontlineclub.com/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Royal Geographic Society', 'https://www.rgs.org', 'html', '{"events_url": "https://www.rgs.org/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('London School of Hygiene', 'https://www.lshtm.ac.uk', 'html', '{"events_url": "https://www.lshtm.ac.uk/newsevents/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Goldsmiths University', 'https://www.gold.ac.uk', 'html', '{"events_url": "https://www.gold.ac.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Category M: International Affairs & Foreign Policy
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('International Institute for Strategic Studies', 'https://www.iiss.org', 'html', '{"events_url": "https://www.iiss.org/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('European Council on Foreign Relations', 'https://ecfr.eu', 'html', '{"events_url": "https://ecfr.eu/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Overseas Development Institute', 'https://odi.org', 'html', '{"events_url": "https://odi.org/en/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Category N: Health, Poverty & Social Policy
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('Health Foundation', 'https://www.health.org.uk', 'html', '{"events_url": "https://www.health.org.uk/what-we-do/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Joseph Rowntree Foundation', 'https://www.jrf.org.uk', 'html', '{"events_url": "https://www.jrf.org.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Institute of Economic Affairs', 'https://iea.org.uk', 'html', '{"events_url": "https://iea.org.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Category O: Science & Research Institutes
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('Alan Turing Institute', 'https://www.turing.ac.uk', 'html', '{"events_url": "https://www.turing.ac.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Francis Crick Institute', 'https://www.crick.ac.uk', 'html', '{"events_url": "https://www.crick.ac.uk/whats-on/events", "selectors": {"link": "a[href*=event], a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Category P: Venues, Museums & Galleries
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('Kings Place', 'https://www.kingsplace.co.uk', 'html', '{"events_url": "https://www.kingsplace.co.uk/whats-on/", "selectors": {"link": "a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('London Library', 'https://www.londonlibrary.co.uk', 'html', '{"events_url": "https://www.londonlibrary.co.uk/whats-on/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('British Museum', 'https://www.britishmuseum.org', 'html', '{"events_url": "https://www.britishmuseum.org/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Tate Modern', 'https://www.tate.org.uk', 'html', '{"events_url": "https://www.tate.org.uk/whats-on?type=talks_and_lectures", "selectors": {"link": "a[href*=whats-on]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('National Gallery', 'https://www.nationalgallery.org.uk', 'html', '{"events_url": "https://www.nationalgallery.org.uk/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Category Q: Additional Think Tanks & Policy
-INSERT INTO sources (name, url, scrape_type, scrape_config) VALUES
-  ('Centre for European Reform', 'https://www.cer.eu', 'html', '{"events_url": "https://www.cer.eu/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Ditchley Foundation', 'https://www.ditchley.com', 'html', '{"events_url": "https://www.ditchley.com/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Wilton Park', 'https://www.wiltonpark.org.uk', 'html', '{"events_url": "https://www.wiltonpark.org.uk/events/", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}'),
-  ('Tony Blair Institute', 'https://www.institute.global', 'html', '{"events_url": "https://www.institute.global/events", "selectors": {"link": "a[href*=event]", "title": "h2, h3", "date": "time, .date"}}')
-ON CONFLICT (name) DO NOTHING;
-
--- Seed: Interests
-INSERT INTO interests (name, slug, color, icon) VALUES
-  ('Constitutional Law', 'constitutional-law', '#dc2626', 'scale'),
-  ('Policy & Politics', 'policy-politics', '#2563eb', 'landmark'),
-  ('Science & Research', 'science-research', '#16a34a', 'flask-conical'),
-  ('Management & Consulting', 'management-consulting', '#9333ea', 'briefcase'),
-  ('Public Speaking & Talks', 'public-speaking', '#ea580c', 'mic'),
-  ('Social & Networking', 'social-networking', '#0891b2', 'users'),
-  ('Technology & AI', 'technology-ai', '#4f46e5', 'cpu'),
-  ('Health & Public Services', 'health-services', '#e11d48', 'heart-pulse'),
-  ('Economics & Fiscal', 'economics-fiscal', '#ca8a04', 'trending-up'),
-  ('International Affairs', 'international-affairs', '#059669')
-ON CONFLICT (name) DO NOTHING;
-
--- Enable RLS (Row Level Security) - open for now since single-user
-ALTER TABLE sources ENABLE ROW LEVEL SECURITY;
-ALTER TABLE interests ENABLE ROW LEVEL SECURITY;
-ALTER TABLE events ENABLE ROW LEVEL SECURITY;
-ALTER TABLE event_interests ENABLE ROW LEVEL SECURITY;
-ALTER TABLE event_actions ENABLE ROW LEVEL SECURITY;
-
--- Email log: track sent emails for idempotency
-CREATE TABLE IF NOT EXISTS email_log (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  email_type TEXT NOT NULL,
-  recipient TEXT NOT NULL,
-  subject TEXT,
-  events_included INTEGER DEFAULT 0,
-  metadata JSONB DEFAULT '{}',
-  sent_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_email_log_type ON email_log(email_type);
-CREATE INDEX IF NOT EXISTS idx_email_log_sent ON email_log(sent_at);
-
-ALTER TABLE email_log ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow all on email_log" ON email_log FOR ALL USING (true) WITH CHECK (true);
-
--- Saved addresses for travel time feature
-CREATE TABLE IF NOT EXISTS saved_addresses (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  label TEXT NOT NULL,
-  address TEXT NOT NULL,
-  latitude DOUBLE PRECISION NOT NULL,
-  longitude DOUBLE PRECISION NOT NULL,
-  is_default BOOLEAN DEFAULT false,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_saved_addresses_default ON saved_addresses(is_default);
-
-ALTER TABLE saved_addresses ENABLE ROW LEVEL SECURITY;
-
--- Policies: allow all for anon (single-user app)
-CREATE POLICY "Allow all on sources" ON sources FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on interests" ON interests FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on events" ON events FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on event_interests" ON event_interests FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on event_actions" ON event_actions FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on saved_addresses" ON saved_addresses FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all on categories" ON categories FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all on companies" ON companies FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all on initiatives" ON initiatives FOR ALL USING (true) WITH CHECK (true);

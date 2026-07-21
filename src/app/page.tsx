@@ -1,640 +1,606 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
-import { supabase } from '@/lib/supabase';
-import type { Event, Interest } from '@/lib/supabase';
-import EventCard from '@/components/EventCard';
-import InterestFilter from '@/components/InterestFilter';
-import UpcomingTimeline from '@/components/UpcomingTimeline';
-import AboutSection from '@/components/AboutSection';
-import StatsSection from '@/components/StatsSection';
-import BottomNav from '@/components/BottomNav';
-import SwipeableCard from '@/components/SwipeableCard';
-import { groupDuplicateEvents, type EventGroup } from '@/lib/event-grouping';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  Radar,
+  Baby,
   Search,
-  RefreshCw,
+  Plus,
+  Star,
+  Building2,
+  Sparkles,
   Loader2,
-  CalendarDays,
-  MapPin,
-  Zap,
-  Compass,
-  Bookmark,
-  EyeOff,
-  CalendarCheck,
-  Info,
-  Map as MapIcon,
-  List,
+  LayoutGrid,
   BarChart3,
-  ArrowDown,
+  Info,
+  X,
 } from 'lucide-react';
+import type { Catalog, Company, Category, Initiative, InitiativeStatus } from '@/lib/supabase';
+import { STATUSES } from '@/lib/supabase';
+import { STATUS_META } from '@/lib/format';
+import { CategoryIcon } from '@/lib/icons';
+import InitiativeCard from '@/components/InitiativeCard';
+import CompanyCard from '@/components/CompanyCard';
+import StatsView from '@/components/StatsView';
+import AddInitiativeModal from '@/components/AddInitiativeModal';
+import BottomNav, { type Section } from '@/components/BottomNav';
 
-const EventMap = lazy(() => import('@/components/EventMap'));
+const LS_FOLLOWS = 'podtrackr:follows';
+const LS_ADDED = 'podtrackr:added-initiatives';
+const LS_COMPANIES = 'podtrackr:added-companies';
 
-type Section = 'discover' | 'saved' | 'hidden' | 'upcoming' | 'stats' | 'about';
-
-export default function Dashboard() {
-  const [events, setEvents] = useState<Event[]>([]);
-  const [interests, setInterests] = useState<Interest[]>([]);
-  const [activeFilter, setActiveFilter] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
+export default function Home() {
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [addedInitiatives, setAddedInitiatives] = useState<Initiative[]>([]);
+  const [addedCompanies, setAddedCompanies] = useState<Company[]>([]);
+  const [follows, setFollows] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [scraping, setScraping] = useState(false);
-  const [lastScraped, setLastScraped] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<Section>('discover');
-  const [upcomingDays, setUpcomingDays] = useState(14);
-  const [upcomingView, setUpcomingView] = useState<'timeline' | 'map'>('timeline');
 
-  // Pull to refresh state
-  const [pullProgress, setPullProgress] = useState(0);
-  const [isPulling, setIsPulling] = useState(false);
-  const pullStartY = useRef(0);
-  const mainRef = useRef<HTMLElement>(null);
+  const [section, setSection] = useState<Section>('discover');
+  const [search, setSearch] = useState('');
+  const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [activeStatus, setActiveStatus] = useState<InitiativeStatus | 'all'>('all');
+  const [showAdd, setShowAdd] = useState(false);
 
-  // Counts for nav badges
-  const [savedCount, setSavedCount] = useState(0);
-  const [hiddenCount, setHiddenCount] = useState(0);
-
-  const fetchEvents = useCallback(async () => {
-    setLoading(true);
+  // --- Load persisted client state ---
+  useEffect(() => {
     try {
-      // Query Supabase directly from client (avoids API route issues on Vercel)
-      let query = supabase
-        .from('events')
-        .select(`
-          *,
-          source:sources(id, name, url),
-          interests:event_interests(interest:interests(*)),
-          actions:event_actions(action, created_at)
-        `)
-        .gte('date', new Date().toISOString())
-        .order('date', { ascending: true });
-
-      if (activeFilter !== 'all') {
-        query = supabase
-          .from('events')
-          .select(`
-            *,
-            source:sources(id, name, url),
-            interests:event_interests!inner(interest:interests!inner(*)),
-            actions:event_actions(action, created_at)
-          `)
-          .eq('interests.interest.slug', activeFilter)
-          .gte('date', new Date().toISOString())
-          .order('date', { ascending: true });
-      }
-
-      if (activeSection === 'upcoming') {
-        const maxDate = new Date();
-        maxDate.setDate(maxDate.getDate() + upcomingDays);
-        query = query.lte('date', maxDate.toISOString());
-      }
-
-      const { data: rawEvents, error } = await query;
-
-      if (error) {
-        console.error('Supabase query error:', error);
-        setEvents([]);
-        setLoading(false);
-        return;
-      }
-
-      // Post-process: flatten interests and actions
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let processed = (rawEvents || []).map((event: any) => {
-        const eventInterests = (event.interests || []).map(
-          (ei: { interest: Record<string, unknown> }) => ei.interest
-        );
-        const actionEntry = event.actions?.[0];
-        const action = actionEntry?.action || null;
-        const actionDate = actionEntry?.created_at || null;
-        return { ...event, interests: eventInterests, action, actionDate, actions: undefined };
-      }) as Event[];
-
-      // View mode filtering
-      if (activeSection === 'hidden') {
-        processed = processed.filter(e => e.action === 'hidden');
-      } else if (activeSection === 'saved' || activeSection === 'upcoming') {
-        processed = processed.filter(e => e.action === 'saved');
-      } else if (activeSection === 'discover') {
-        processed = processed.filter(e => !e.action);
-      } else {
-        processed = processed.filter(e => e.action !== 'hidden');
-      }
-
-      // Search filter
-      if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        processed = processed.filter(
-          e =>
-            e.title.toLowerCase().includes(q) ||
-            (e.description || '').toLowerCase().includes(q) ||
-            (e.location || '').toLowerCase().includes(q)
-        );
-      }
-
-      setEvents(processed);
-    } catch (err) {
-      console.error('fetchEvents error:', err);
-      setEvents([]);
-    }
-    setLoading(false);
-  }, [activeFilter, searchQuery, activeSection, upcomingDays]);
-
-  const fetchCounts = useCallback(async () => {
-    try {
-      const { data: actions } = await supabase
-        .from('event_actions')
-        .select('action, event_id');
-      const saved = (actions || []).filter(a => a.action === 'saved');
-      const hidden = (actions || []).filter(a => a.action === 'hidden');
-      setSavedCount(saved.length);
-      setHiddenCount(hidden.length);
+      const f = localStorage.getItem(LS_FOLLOWS);
+      if (f) setFollows(new Set(JSON.parse(f)));
+      const a = localStorage.getItem(LS_ADDED);
+      if (a) setAddedInitiatives(JSON.parse(a));
+      const c = localStorage.getItem(LS_COMPANIES);
+      if (c) setAddedCompanies(JSON.parse(c));
     } catch {
-      // counts fail silently
+      /* ignore corrupt storage */
     }
   }, []);
 
-  const fetchInterests = async () => {
-    const { data } = await supabase.from('interests').select('*').order('name');
-    if (data) setInterests(data);
-  };
-
-  const fetchLastScraped = async () => {
-    const { data } = await supabase
-      .from('sources')
-      .select('last_scraped_at')
-      .not('last_scraped_at', 'is', null)
-      .order('last_scraped_at', { ascending: false })
-      .limit(1);
-    if (data?.[0]?.last_scraped_at) {
-      setLastScraped(data[0].last_scraped_at);
-    }
-  };
-
+  // --- Fetch catalog ---
   useEffect(() => {
-    fetchInterests();
-    fetchLastScraped();
-    fetchCounts();
-  }, [fetchCounts]);
-
-  useEffect(() => {
-    if (activeSection !== 'about' && activeSection !== 'stats') {
-      fetchEvents();
-    }
-  }, [fetchEvents, activeSection]);
-
-  // Pull-to-refresh handlers
-  const handlePullStart = useCallback((e: React.TouchEvent) => {
-    if (window.scrollY === 0) {
-      pullStartY.current = e.touches[0].clientY;
-      setIsPulling(true);
-    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/catalog');
+        const data = (await res.json()) as Catalog;
+        if (!cancelled) setCatalog(data);
+      } catch {
+        if (!cancelled) setCatalog({ companies: [], categories: [], initiatives: [], source: 'demo' });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const handlePullMove = useCallback((e: React.TouchEvent) => {
-    if (!isPulling) return;
-    const diff = e.touches[0].clientY - pullStartY.current;
-    if (diff > 0 && window.scrollY === 0) {
-      setPullProgress(Math.min(diff / 120, 1));
-    }
-  }, [isPulling]);
+  // --- Merged data ---
+  const companies = useMemo<Company[]>(() => {
+    const base = catalog?.companies ?? [];
+    const seen = new Set(base.map((c) => c.id));
+    return [...base, ...addedCompanies.filter((c) => !seen.has(c.id))];
+  }, [catalog, addedCompanies]);
 
-  const handlePullEnd = useCallback(() => {
-    if (pullProgress >= 1) {
-      handleScrape();
-    }
-    setPullProgress(0);
-    setIsPulling(false);
-  }, [pullProgress]); // eslint-disable-line react-hooks/exhaustive-deps
+  const categories = useMemo<Category[]>(() => catalog?.categories ?? [], [catalog]);
 
-  // Smart event grouping
-  const groupedEvents: EventGroup[] = useMemo(() => {
-    if (activeSection === 'discover') {
-      return groupDuplicateEvents(events);
-    }
-    return events.map(e => ({ primary: e, duplicates: [], sources: [(e.source as { name: string } | undefined)?.name || 'Unknown'] }));
-  }, [events, activeSection]);
+  const initiatives = useMemo<Initiative[]>(() => {
+    const base = catalog?.initiatives ?? [];
+    const seen = new Set(base.map((i) => i.id));
+    return [...addedInitiatives.filter((i) => !seen.has(i.id)), ...base];
+  }, [catalog, addedInitiatives]);
 
-  const handleAction = async (eventId: string, action: 'saved' | 'hidden') => {
-    await fetch('/api/events', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ event_id: eventId, action }),
+  const companyById = useCallback(
+    (id: string) => companies.find((c) => c.id === id),
+    [companies]
+  );
+  const categoryBySlug = useCallback(
+    (slug: string) => categories.find((c) => c.slug === slug),
+    [categories]
+  );
+
+  // --- Follow toggle (persisted locally) ---
+  const toggleFollow = useCallback((id: string) => {
+    setFollows((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem(LS_FOLLOWS, JSON.stringify([...next]));
+      } catch {
+        /* ignore */
+      }
+      return next;
     });
-    fetchEvents();
-    fetchCounts();
-  };
+  }, []);
 
-  const handleSave = async (eventId: string) => {
-    const group = groupedEvents.find(g => g.primary.id === eventId);
-    await handleAction(eventId, 'saved');
-    if (group) {
-      for (const dup of group.duplicates) {
-        await handleAction(dup.id, 'saved');
+  // --- Handle newly created initiative ---
+  const handleCreated = useCallback((initiative: Initiative, newCompany?: Company) => {
+    setAddedInitiatives((prev) => {
+      const next = [initiative, ...prev];
+      try {
+        localStorage.setItem(LS_ADDED, JSON.stringify(next));
+      } catch {
+        /* ignore */
       }
-    }
-  };
-
-  const handleHide = async (eventId: string) => {
-    const group = groupedEvents.find(g => g.primary.id === eventId);
-    await handleAction(eventId, 'hidden');
-    if (group) {
-      for (const dup of group.duplicates) {
-        await handleAction(dup.id, 'hidden');
-      }
-    }
-  };
-
-  const handleRestore = async (eventId: string) => {
-    await fetch('/api/events', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ event_id: eventId, action: 'hidden' }),
+      return next;
     });
-    fetchEvents();
-    fetchCounts();
-  };
-
-  const handleScrape = async () => {
-    setScraping(true);
-    try {
-      const res = await fetch('/api/scrape', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        fetchEvents();
-        fetchLastScraped();
-        fetchCounts();
-      }
-    } catch {
-      // Scrape failed silently
+    if (newCompany) {
+      setAddedCompanies((prev) => {
+        const next = [newCompany, ...prev];
+        try {
+          localStorage.setItem(LS_COMPANIES, JSON.stringify(next));
+        } catch {
+          /* ignore */
+        }
+        return next;
+      });
     }
-    setScraping(false);
-  };
+    setShowAdd(false);
+  }, []);
 
-  const handleSectionChange = (section: Section) => {
-    setActiveSection(section);
-    setSearchQuery('');
-    setActiveFilter('all');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  // --- Filtering for discover ---
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return initiatives.filter((i) => {
+      if (activeCategory !== 'all' && i.category_slug !== activeCategory) return false;
+      if (activeStatus !== 'all' && i.status !== activeStatus) return false;
+      if (q) {
+        const co = companyById(i.company_id);
+        const hay = `${i.title} ${i.description ?? ''} ${co?.name ?? ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [initiatives, search, activeCategory, activeStatus, companyById]);
 
-  const NAV_ITEMS: { id: Section; label: string; icon: React.ReactNode; count?: number }[] = [
-    { id: 'discover', label: 'Discover', icon: <Compass className="w-4 h-4" /> },
-    { id: 'saved', label: 'Saved', icon: <Bookmark className="w-4 h-4" />, count: savedCount },
-    { id: 'upcoming', label: 'Upcoming', icon: <CalendarCheck className="w-4 h-4" /> },
-    { id: 'hidden', label: 'Hidden', icon: <EyeOff className="w-4 h-4" />, count: hiddenCount },
-    { id: 'stats', label: 'Stats', icon: <BarChart3 className="w-4 h-4" /> },
-    { id: 'about', label: 'About', icon: <Info className="w-4 h-4" /> },
-  ];
+  const followedInitiatives = useMemo(
+    () => initiatives.filter((i) => follows.has(i.id)),
+    [initiatives, follows]
+  );
 
-  const sectionDescriptions: Record<Section, string> = {
-    discover: 'New events waiting for your judgement',
-    saved: 'Events you\'ve bookmarked',
-    hidden: 'Events you\'ve dismissed',
-    upcoming: 'Your saved events on a timeline & map',
-    stats: 'Your event discovery at a glance',
-    about: 'Sources, methodology & how it works',
-  };
+  const summary = useMemo(() => {
+    const active = initiatives.filter((i) => i.status === 'active').length;
+    const leave = initiatives.map((i) => i.leave_weeks).filter((w): w is number => w != null);
+    const avgLeave = leave.length ? Math.round(leave.reduce((a, b) => a + b, 0) / leave.length) : 0;
+    return { total: initiatives.length, companies: companies.length, active, avgLeave };
+  }, [initiatives, companies]);
 
   return (
-    <div
-      className="min-h-screen bg-zinc-50 dark:bg-zinc-950"
-      onTouchStart={handlePullStart}
-      onTouchMove={handlePullMove}
-      onTouchEnd={handlePullEnd}
-    >
-      {/* Pull to refresh indicator */}
-      {pullProgress > 0 && (
-        <div
-          className="fixed top-0 left-0 right-0 z-[60] flex items-center justify-center pointer-events-none pull-indicator"
-          style={{ transform: `translateY(${pullProgress * 60 - 40}px)`, opacity: pullProgress }}
-        >
-          <div className={`flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-600 text-white text-xs font-medium shadow-lg ${pullProgress >= 1 ? 'scale-110' : ''} transition-transform`}>
-            <ArrowDown className={`w-3.5 h-3.5 transition-transform ${pullProgress >= 1 ? 'rotate-180' : ''}`} />
-            {pullProgress >= 1 ? 'Release to refresh' : 'Pull to refresh'}
-          </div>
-        </div>
-      )}
-
+    <div className="min-h-full">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl border-b border-zinc-200 dark:border-zinc-800">
-        <div className="max-w-5xl mx-auto px-3 sm:px-4 py-2 sm:py-3">
-          <div className="flex items-center justify-between mb-2 sm:mb-3">
-            <div className="flex items-center gap-2 sm:gap-3">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-600 rounded-xl flex items-center justify-center shrink-0">
-                <Radar className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+      <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white/80 backdrop-blur-lg dark:border-zinc-800 dark:bg-zinc-950/80">
+        <div className="mx-auto max-w-5xl px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white">
+                <Baby className="h-5 w-5" />
               </div>
-              <div className="min-w-0">
-                <h1 className="text-lg sm:text-xl font-bold text-zinc-900 dark:text-white truncate">
-                  Events for Christian
+              <div>
+                <h1 className="text-lg font-bold leading-none tracking-tight text-zinc-900 dark:text-zinc-50">
+                  PodTrackr
                 </h1>
-                <p className="text-[10px] sm:text-xs text-zinc-500 dark:text-zinc-400 hidden sm:block">
-                  London events, curated for you
-                </p>
+                <p className="text-[11px] text-zinc-500">Corporate parenthood initiatives</p>
               </div>
             </div>
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              {lastScraped && (
-                <span className="text-[10px] sm:text-xs text-zinc-400 hidden lg:block">
-                  Updated{' '}
-                  {new Date(lastScraped).toLocaleDateString('en-GB', {
-                    day: 'numeric',
-                    month: 'short',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </span>
-              )}
-              <button
-                onClick={handleScrape}
-                disabled={scraping}
-                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs sm:text-sm font-medium rounded-lg transition-colors"
-              >
-                {scraping ? (
-                  <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                )}
-                <span className="hidden sm:inline">{scraping ? 'Scraping...' : 'Refresh'}</span>
-              </button>
-            </div>
+            <button
+              onClick={() => setShowAdd(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700"
+            >
+              <Plus className="h-4 w-4" />
+              <span className="hidden sm:inline">Add</span>
+            </button>
           </div>
 
-          {/* Desktop navigation tabs — hidden on mobile (bottom nav instead) */}
-          <nav className="hidden md:flex gap-1 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
-            {NAV_ITEMS.map(item => (
-              <button
-                key={item.id}
-                onClick={() => handleSectionChange(item.id)}
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
-                  activeSection === item.id
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-                }`}
-              >
-                {item.icon}
-                <span>{item.label}</span>
-                {item.count !== undefined && item.count > 0 && (
-                  <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
-                    activeSection === item.id
-                      ? 'bg-white/20 text-white'
-                      : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300'
-                  }`}>
-                    {item.count}
-                  </span>
-                )}
-              </button>
-            ))}
+          {/* Desktop nav */}
+          <nav className="mt-3 hidden items-center gap-1 md:flex">
+            {(
+              [
+                ['discover', 'Discover', LayoutGrid],
+                ['companies', 'Companies', Building2],
+                ['followed', 'Following', Star],
+                ['stats', 'Insights', BarChart3],
+                ['about', 'About', Info],
+              ] as const
+            ).map(([key, label, Icon]) => {
+              const on = section === key;
+              return (
+                <button
+                  key={key}
+                  onClick={() => setSection(key)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                    on
+                      ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300'
+                      : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800'
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {label}
+                  {key === 'followed' && follows.size > 0 && (
+                    <span className="ml-0.5 rounded-full bg-amber-500 px-1.5 text-[10px] font-bold text-white">
+                      {follows.size}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </nav>
         </div>
       </header>
 
-      {/* Content */}
-      <main ref={mainRef} className="max-w-5xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
-        {/* Section header */}
-        {activeSection !== 'about' && (
-          <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 mb-3 sm:mb-4">
-            {sectionDescriptions[activeSection]}
-            {activeSection === 'discover' && (
-              <span className="text-zinc-400 ml-1 hidden sm:inline">
-                — swipe right to save, left to hide
-              </span>
-            )}
-          </p>
-        )}
-
-        {/* Search + Filters */}
-        {['discover', 'saved', 'hidden'].includes(activeSection) && (
-          <div className="space-y-2 sm:space-y-3 mb-4 sm:mb-6">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-              <input
-                type="text"
-                placeholder="Search events, topics, venues..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 sm:py-2.5 bg-zinc-100 dark:bg-zinc-800 border-0 rounded-xl text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0 scrollbar-hide">
-              <InterestFilter
-                interests={interests}
-                activeFilter={activeFilter}
-                onFilterChange={setActiveFilter}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Upcoming section controls */}
-        {activeSection === 'upcoming' && (
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <span className="text-xs sm:text-sm text-zinc-500">Show:</span>
-              {[
-                { days: 7, label: 'Week' },
-                { days: 14, label: '2 Weeks' },
-                { days: 30, label: 'Month' },
-              ].map(opt => (
-                <button
-                  key={opt.days}
-                  onClick={() => setUpcomingDays(opt.days)}
-                  className={`px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
-                    upcomingDays === opt.days
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-1 ml-auto">
-              <button
-                onClick={() => setUpcomingView('timeline')}
-                className={`p-1.5 sm:p-2 rounded-lg transition-all ${
-                  upcomingView === 'timeline'
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'
-                }`}
-                title="Timeline view"
-              >
-                <List className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => setUpcomingView('map')}
-                className={`p-1.5 sm:p-2 rounded-lg transition-all ${
-                  upcomingView === 'map'
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'
-                }`}
-                title="Map view"
-              >
-                <MapIcon className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Section content */}
-        {activeSection === 'about' ? (
-          <AboutSection />
-        ) : activeSection === 'stats' ? (
-          <StatsSection />
-        ) : loading ? (
-          <div className="flex flex-col items-center justify-center py-16 sm:py-20">
-            <Loader2 className="w-7 h-7 sm:w-8 sm:h-8 text-indigo-500 animate-spin mb-3 sm:mb-4" />
-            <p className="text-xs sm:text-sm text-zinc-500">Loading events...</p>
-          </div>
-        ) : events.length === 0 ? (
-          <EmptyState
-            section={activeSection}
-            onScrape={handleScrape}
-            scraping={scraping}
-          />
-        ) : activeSection === 'upcoming' ? (
-          <div className="space-y-4 sm:space-y-6">
-            {upcomingView === 'map' ? (
-              <Suspense fallback={
-                <div className="w-full h-[300px] sm:h-[400px] md:h-[500px] landscape:h-[50vh] rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
-                  <Loader2 className="w-6 h-6 text-indigo-500 animate-spin" />
-                </div>
-              }>
-                <EventMap events={events} />
-              </Suspense>
-            ) : (
-              <UpcomingTimeline events={events} />
-            )}
+      <main className="mx-auto max-w-5xl px-4 py-5">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-24 text-zinc-400">
+            <Loader2 className="h-8 w-8 animate-spin" />
+            <p className="mt-3 text-sm">Loading initiatives…</p>
           </div>
         ) : (
           <>
-            {/* Stats bar */}
-            <div className="flex items-center gap-3 sm:gap-4 mb-3 sm:mb-4 text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
-              <span className="flex items-center gap-1">
-                <CalendarDays className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                {groupedEvents.length} event{groupedEvents.length !== 1 ? 's' : ''}
-                {groupedEvents.length !== events.length && (
-                  <span className="text-[10px] sm:text-xs text-zinc-400 ml-1">
-                    ({events.length - groupedEvents.length} merged)
-                  </span>
-                )}
-              </span>
-              <span className="flex items-center gap-1">
-                <MapPin className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                London
-              </span>
-            </div>
+            {section === 'discover' && (
+              <Discover
+                summary={summary}
+                categories={categories}
+                initiatives={initiatives}
+                filtered={filtered}
+                search={search}
+                setSearch={setSearch}
+                activeCategory={activeCategory}
+                setActiveCategory={setActiveCategory}
+                activeStatus={activeStatus}
+                setActiveStatus={setActiveStatus}
+                companyById={companyById}
+                categoryBySlug={categoryBySlug}
+                follows={follows}
+                onToggleFollow={toggleFollow}
+                onAdd={() => setShowAdd(true)}
+              />
+            )}
 
-            {/* Event grid — swipeable on mobile in discover mode */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
-              {groupedEvents.map((group) => (
-                activeSection === 'discover' ? (
-                  <SwipeableCard
-                    key={group.primary.id}
-                    onSwipeRight={() => handleSave(group.primary.id)}
-                    onSwipeLeft={() => handleHide(group.primary.id)}
-                    enabled={true}
-                  >
-                    <EventCard
-                      event={group.primary}
-                      onSave={handleSave}
-                      onHide={handleHide}
-                      onRestore={handleRestore}
-                      variant="discover"
-                      duplicateSources={group.sources.length > 1 ? group.sources : undefined}
+            {section === 'companies' && (
+              <div className="space-y-3">
+                {companies
+                  .map((co) => ({
+                    company: co,
+                    items: initiatives.filter((i) => i.company_id === co.id),
+                  }))
+                  .sort((a, b) => b.items.length - a.items.length)
+                  .map(({ company, items }) => (
+                    <CompanyCard
+                      key={company.id}
+                      company={company}
+                      initiatives={items}
+                      categories={categories}
+                      companies={companies}
+                      follows={follows}
+                      onToggleFollow={toggleFollow}
                     />
-                  </SwipeableCard>
-                ) : (
-                  <EventCard
-                    key={group.primary.id}
-                    event={group.primary}
-                    onSave={handleSave}
-                    onHide={handleHide}
-                    onRestore={handleRestore}
-                    variant={activeSection as 'saved' | 'hidden'}
-                    duplicateSources={group.sources.length > 1 ? group.sources : undefined}
+                  ))}
+              </div>
+            )}
+
+            {section === 'followed' && (
+              <>
+                {followedInitiatives.length === 0 ? (
+                  <Empty
+                    icon={<Star className="h-7 w-7" />}
+                    title="Nothing followed yet"
+                    body="Tap the star on any initiative to keep an eye on it here."
                   />
-                )
-              ))}
-            </div>
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {followedInitiatives.map((i) => (
+                      <InitiativeCard
+                        key={i.id}
+                        initiative={i}
+                        company={companyById(i.company_id)}
+                        category={categoryBySlug(i.category_slug)}
+                        followed
+                        onToggleFollow={toggleFollow}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {section === 'stats' && (
+              <StatsView initiatives={initiatives} companies={companies} categories={categories} />
+            )}
+
+            {section === 'about' && <About source={catalog?.source ?? 'demo'} />}
           </>
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-zinc-200 dark:border-zinc-800 py-4 sm:py-6 mt-8 sm:mt-12">
-        <div className="max-w-5xl mx-auto px-3 sm:px-4 text-center text-[10px] sm:text-xs text-zinc-400 dark:text-zinc-600">
-          <p>
-            Events for Christian scrapes 80+ London event sources daily.
-          </p>
-          <p className="mt-1">
-            No AI tokens used — events are matched using keyword-based interest tagging.
-          </p>
-        </div>
-      </footer>
+      <BottomNav active={section} onChange={setSection} followCount={follows.size} />
 
-      {/* Mobile bottom navigation */}
-      <BottomNav
-        activeSection={activeSection}
-        onSectionChange={handleSectionChange}
-        savedCount={savedCount}
-        hiddenCount={hiddenCount}
-      />
+      {showAdd && (
+        <AddInitiativeModal
+          companies={companies}
+          categories={categories}
+          onClose={() => setShowAdd(false)}
+          onCreated={handleCreated}
+        />
+      )}
     </div>
   );
 }
 
-function EmptyState({ section, onScrape, scraping }: { section: Section; onScrape: () => void; scraping: boolean }) {
-  const config: Record<string, { icon: React.ReactNode; title: string; desc: string; showScrape: boolean }> = {
-    discover: {
-      icon: <Compass className="w-10 h-10 sm:w-12 sm:h-12 text-zinc-300 dark:text-zinc-700" />,
-      title: 'No new events to judge',
-      desc: 'You\'ve reviewed all available events. Hit Refresh to scrape for more, or check back tomorrow.',
-      showScrape: true,
-    },
-    saved: {
-      icon: <Bookmark className="w-10 h-10 sm:w-12 sm:h-12 text-zinc-300 dark:text-zinc-700" />,
-      title: 'No saved events',
-      desc: 'Save events from Discover by clicking the bookmark icon. They\'ll appear here.',
-      showScrape: false,
-    },
-    hidden: {
-      icon: <EyeOff className="w-10 h-10 sm:w-12 sm:h-12 text-zinc-300 dark:text-zinc-700" />,
-      title: 'No hidden events',
-      desc: 'Events you dismiss will appear here. You can restore them at any time.',
-      showScrape: false,
-    },
-    upcoming: {
-      icon: <CalendarCheck className="w-10 h-10 sm:w-12 sm:h-12 text-zinc-300 dark:text-zinc-700" />,
-      title: 'No upcoming events',
-      desc: 'Save events from Discover — your upcoming ones will appear here on a timeline and map.',
-      showScrape: false,
-    },
-  };
+// ---------------------------------------------------------------------------
+// Discover section
+// ---------------------------------------------------------------------------
 
-  const c = config[section] || config.discover;
+function Discover(props: {
+  summary: { total: number; companies: number; active: number; avgLeave: number };
+  categories: Category[];
+  initiatives: Initiative[];
+  filtered: Initiative[];
+  search: string;
+  setSearch: (s: string) => void;
+  activeCategory: string;
+  setActiveCategory: (s: string) => void;
+  activeStatus: InitiativeStatus | 'all';
+  setActiveStatus: (s: InitiativeStatus | 'all') => void;
+  companyById: (id: string) => Company | undefined;
+  categoryBySlug: (slug: string) => Category | undefined;
+  follows: Set<string>;
+  onToggleFollow: (id: string) => void;
+  onAdd: () => void;
+}) {
+  const {
+    summary,
+    categories,
+    initiatives,
+    filtered,
+    search,
+    setSearch,
+    activeCategory,
+    setActiveCategory,
+    activeStatus,
+    setActiveStatus,
+    companyById,
+    categoryBySlug,
+    follows,
+    onToggleFollow,
+    onAdd,
+  } = props;
+
+  const countFor = (slug: string) => initiatives.filter((i) => i.category_slug === slug).length;
 
   return (
-    <div className="flex flex-col items-center justify-center py-16 sm:py-20">
-      {c.icon}
-      <h3 className="text-base sm:text-lg font-semibold text-zinc-600 dark:text-zinc-400 mb-2 mt-3 sm:mt-4">
-        {c.title}
-      </h3>
-      <p className="text-xs sm:text-sm text-zinc-500 mb-4 text-center max-w-sm px-4">
-        {c.desc}
-      </p>
-      {c.showScrape && (
+    <div className="space-y-5">
+      {/* Summary */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Summary icon={<Sparkles className="h-4 w-4" />} value={summary.total} label="Initiatives" color="#6366f1" />
+        <Summary icon={<Building2 className="h-4 w-4" />} value={summary.companies} label="Companies" color="#0891b2" />
+        <Summary icon={<Star className="h-4 w-4" />} value={summary.active} label="Active" color="#16a34a" />
+        <Summary icon={<Baby className="h-4 w-4" />} value={`${summary.avgLeave}w`} label="Avg. leave" color="#db2777" />
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search initiatives, companies…"
+          className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-9 text-sm outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-zinc-800 dark:bg-zinc-900 dark:focus:ring-indigo-900/40"
+        />
+        {search && (
+          <button
+            onClick={() => setSearch('')}
+            aria-label="Clear search"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-zinc-400 hover:text-zinc-700"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {/* Category filter */}
+      <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 scrollbar-hide">
+        <Chip active={activeCategory === 'all'} onClick={() => setActiveCategory('all')}>
+          All categories
+        </Chip>
+        {categories.map((c) => {
+          const active = activeCategory === c.slug;
+          return (
+            <button
+              key={c.id}
+              onClick={() => setActiveCategory(active ? 'all' : c.slug)}
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                active
+                  ? 'border-transparent text-white'
+                  : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800'
+              }`}
+              style={active ? { backgroundColor: c.color } : undefined}
+            >
+              <CategoryIcon icon={c.icon} className="h-3.5 w-3.5" style={active ? undefined : { color: c.color }} />
+              {c.name}
+              <span className={active ? 'opacity-80' : 'text-zinc-400'}>{countFor(c.slug)}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Status filter */}
+      <div className="flex flex-wrap gap-2">
+        <Chip active={activeStatus === 'all'} onClick={() => setActiveStatus('all')} small>
+          Any status
+        </Chip>
+        {STATUSES.map((s) => (
+          <button
+            key={s}
+            onClick={() => setActiveStatus(activeStatus === s ? 'all' : s)}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+              activeStatus === s
+                ? `${STATUS_META[s].bg} ${STATUS_META[s].text} border-transparent ring-1 ring-inset ${STATUS_META[s].ring}`
+                : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800'
+            }`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${STATUS_META[s].dot}`} />
+            {STATUS_META[s].label}
+          </button>
+        ))}
+      </div>
+
+      {/* Results */}
+      {filtered.length === 0 ? (
+        <Empty
+          icon={<Search className="h-7 w-7" />}
+          title="No initiatives match"
+          body="Try clearing filters, or add one you know about."
+          action={{ label: 'Add an initiative', onClick: onAdd }}
+        />
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filtered.map((i) => (
+            <InitiativeCard
+              key={i.id}
+              initiative={i}
+              company={companyById(i.company_id)}
+              category={categoryBySlug(i.category_slug)}
+              followed={follows.has(i.id)}
+              onToggleFollow={onToggleFollow}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Small presentational helpers
+// ---------------------------------------------------------------------------
+
+function Summary({
+  icon,
+  value,
+  label,
+  color,
+}: {
+  icon: React.ReactNode;
+  value: number | string;
+  label: string;
+  color: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white p-3.5 dark:border-zinc-800 dark:bg-zinc-900">
+      <div
+        className="mb-1.5 inline-flex h-7 w-7 items-center justify-center rounded-lg text-white"
+        style={{ backgroundColor: color }}
+      >
+        {icon}
+      </div>
+      <p className="text-xl font-bold text-zinc-900 dark:text-zinc-50">{value}</p>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400">{label}</p>
+    </div>
+  );
+}
+
+function Chip({
+  active,
+  onClick,
+  children,
+  small,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  small?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`inline-flex shrink-0 items-center rounded-full border font-medium transition ${
+        small ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-xs'
+      } ${
+        active
+          ? 'border-transparent bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
+          : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Empty({
+  icon,
+  title,
+  body,
+  action,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  body: string;
+  action?: { label: string; onClick: () => void };
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-200 py-16 text-center dark:border-zinc-800">
+      <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-800">
+        {icon}
+      </div>
+      <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h3>
+      <p className="mt-1 max-w-xs text-sm text-zinc-500">{body}</p>
+      {action && (
         <button
-          onClick={onScrape}
-          disabled={scraping}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors"
+          onClick={action.onClick}
+          className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
         >
-          <Zap className="w-4 h-4" />
-          Scrape Events Now
+          <Plus className="h-4 w-4" />
+          {action.label}
         </button>
       )}
+    </div>
+  );
+}
+
+function About({ source }: { source: 'supabase' | 'demo' }) {
+  return (
+    <div className="mx-auto max-w-2xl space-y-5">
+      <div className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-600 text-white">
+          <Baby className="h-6 w-6" />
+        </div>
+        <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">About PodTrackr</h2>
+        <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+          PodTrackr catalogs the programs companies run to support employees becoming and being
+          parents — parental leave, childcare, fertility and family-forming benefits, flexible work,
+          return-to-work support and more. Browse by category, compare across companies, follow the
+          initiatives you care about, and see how the landscape is shaping up.
+        </p>
+      </div>
+
+      <div className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">How it works</h3>
+        <ul className="mt-3 space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
+          <li className="flex gap-2">
+            <Star className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+            Follow initiatives to build a shortlist — saved in your browser.
+          </li>
+          <li className="flex gap-2">
+            <Plus className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
+            Add initiatives you know about; they persist locally and sync to your database when one is
+            configured.
+          </li>
+          <li className="flex gap-2">
+            <BarChart3 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+            The Insights tab benchmarks leave length, gender-neutral policies and rollout status.
+          </li>
+        </ul>
+      </div>
+
+      <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/50">
+        <p>
+          Data source: <span className="font-medium text-zinc-700 dark:text-zinc-300">
+            {source === 'supabase' ? 'Supabase database' : 'bundled demo dataset'}
+          </span>
+          . The seeded companies and figures are illustrative, drawn from publicly reported programs,
+          and may not reflect current policies. Configure Supabase (see <code>README.md</code>) to
+          track your own data.
+        </p>
+      </div>
     </div>
   );
 }
